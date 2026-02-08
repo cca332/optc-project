@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+runs/
+data/
+results*/
+.DS_Store
+*.pt
+*.pth
+*.npz
+*.pkl
+*.log

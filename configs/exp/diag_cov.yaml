@@ -1,0 +1,4 @@
+step3:
+  detector:
+    covariance:
+      mode: diag

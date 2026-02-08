@@ -1,0 +1,283 @@
+project:
+  name: optc_uras
+  seed: 42
+  device: cpu
+  dtype: float32
+  deterministic: true
+
+paths:
+  data_root: ${env:DATA_ROOT,./data}
+  run_root: ${env:RUN_ROOT,./runs}
+  exp_name: default
+  resume_from: null
+  cache_dir: null
+
+io:
+  num_workers: 0
+  pin_memory: false
+  log_every: 20
+  save_every: 1
+  save_config_snapshot: true
+
+data:
+  dataset: optc
+  views: [process, file, network]
+  sample_granularity_minutes: 15
+  time_format: null
+  timezone: null
+
+  raw:
+    raw_format: pidmaker_preprocessed
+    raw_paths: []
+  processed:
+    format: pt
+    path: ${paths.data_root}/processed
+  splits:
+    path: ${paths.data_root}/splits
+    strategy: benign_only_train
+    train_days: null
+    val_days: null
+    test_days: null
+    train_hosts: null
+    val_hosts: null
+    test_hosts: null
+    label_source: ground_truth
+
+step1:
+  enable: true
+  time:
+    slot_minutes: 1
+    include_empty_slot_indicator: true
+
+  aggregator:
+    type: deterministic_stats
+    per_view_schema:
+      process:
+        event_type_vocab: null   # null => 从数据扫描构建
+        key_fields: [exe, path, op]
+      file:
+        event_type_vocab: null
+        key_fields: [path, op]
+      network:
+        event_type_vocab: null
+        key_fields: [ip, port, op]
+    hash:
+      num_buckets: 128
+      seed: 17
+    output_dim_per_view:
+      process: null
+      file: null
+      network: null
+
+  random_projection:
+    enabled: true
+    target_dim: 64
+    matrix_type: gaussian   # gaussian | achlioptas_sparse
+    seed: 2025
+    normalize: l2           # l2 | zscore | none
+    nonlinearity: none      # none | tanh
+
+  readout:
+    type: mean_pooling
+
+  quality:
+    enabled: true
+    components: [coverage, validity, completeness, uniqueness]
+    weights:
+      coverage: 0.25
+      validity: 0.25
+      completeness: 0.25
+      uniqueness: 0.25
+    standardize: train_stats     # train_stats | sliding_window
+    softmax_temperature: 0.5
+    inject_mode: scale_view_vector
+    stability:
+      enabled: false
+
+  routing_alignment:
+    enabled: true
+    num_subspaces: 2
+    router:
+      type: mlp
+      hidden_dims: [128, 64]
+      dropout: 0.1
+    alignment_bases:
+      num_bases: ${step1.routing_alignment.num_subspaces}
+      base_dim_in: ${step1.random_projection.target_dim}
+      base_dim_out: ${step1.random_projection.target_dim}
+      apply_level: slot_level
+    post_readout: mean_pooling
+
+  gating_fusion:
+    enabled: true
+    pearson_gate:
+      gamma: 0.15
+      mode: hard      # hard | soft
+      beta: 10.0      # soft gate steepness
+      aggregate: mean_abs
+    interaction:
+      enabled: true
+      type: single_head_attention
+      dim: ${step1.random_projection.target_dim}
+    fusion:
+      base_fusion: weighted_sum
+      final_mode: gated_interpolation
+
+  outputs:
+    return_intermediates: true
+
+step2:
+  enable:
+    enabled: true
+
+  federated:
+    rounds: 1
+    client_fraction: 1.0
+    min_clients: 1
+    local_epochs: 1
+    batch_size: 32
+    optimizer:
+      type: adamw
+      lr: 1.0e-3
+      weight_decay: 1.0e-4
+    server_lr: 1.0
+
+  uras:
+    subspace_dim: 16
+    behavior_feature_dim: 256
+    projection_heads:
+      shared_or_per_subspace: per_subspace
+      normalize: true
+
+  teacher:
+    enabled: true
+    data_source: benign_behavior_features
+    augmentations: [mask, jitter, dropout]
+    temperature: 0.1
+    pretrain_epochs: 1
+    freeze_after: true
+    checkpoint_path: ${paths.run_root}/${paths.exp_name}/checkpoints/teacher.pt
+
+  student:
+    backbone_trainable_parts: [router, alignment, interaction, student_heads]
+    freeze_parts: []
+    normalize_output: true
+
+  losses:
+    asd:
+      enabled: true
+      lambda_stats: 0.1
+    at_infonce:
+      enabled: true
+      lambda: 1.0
+    temperature_schedule:
+      enabled: true
+      params:
+        a: 2.0
+        b: 1.0
+        c: 1.0
+        min_tau: 0.05
+    log_signals: true
+
+  dp:
+    feature_dp:
+      enabled: true
+      clip_C: 1.0
+      noise_sigma: 0.2
+    grad_dp:
+      enabled: true
+      base_clip_C0: 1.0
+      importance_alpha: 0.5
+      noise_sigma0: 0.1
+      noise_schedule: null
+    secure_aggregation:
+      enabled: false
+      protocol: mock_secureagg
+      params: {}
+
+step3:
+  enable:
+    enabled: true
+
+  representation:
+    source: uras   # uras | z
+
+  scd:
+    enabled: true
+    style_dim: 16
+    content_dim: 16
+    train:
+      epochs: 2
+      lr: 1.0e-3
+      loss_weights:
+        lambda_decorr: 1.0
+        lambda_recon: 1.0
+        lambda_var: 1.0
+      freeze_backbone: true
+      variance_floor: 1.0e-4
+
+  detector:
+    type: mahalanobis
+    covariance:
+      mode: full   # full | diag
+      shrinkage: 1.0e-3
+    fit:
+      use_benign_split: train
+    score:
+      use_squared: true
+
+  threshold:
+    base_quantile_q: 0.99
+    calibrate_split: val
+    score_to_prob:
+      enabled: false
+      scale_a: 1.0
+
+  atc:
+    enabled: true
+    lambdas:
+      lambda_c: 0.2
+      lambda_r: 0.2
+      lambda_p: 0.0
+    signals:
+      confidence_source: step1_w_entropy
+      route_uncertainty_source: step1_route_entropy
+      privacy_risk_source: step2_or_engineering
+
+  drift:
+    enabled: false
+    margin: 0.5
+    ema_alpha: 0.01
+    update_covariance: diag_ema
+    buffer:
+      enabled: true
+      size: 2048
+      policy: benign_only
+
+  explain:
+    enabled: false
+    top_k: 2
+    proj:
+      train_epochs: 2
+      lr: 1.0e-3
+      loss: mse
+    score:
+      alpha_reliability: 2.0
+
+eval:
+  metrics: [precision, recall, f1, auc, auprc, fpr_at_tpr]
+  unit: host_15min
+  thresholding_for_report: adaptive
+  save_predictions: true
+  plots:
+    save_roc: false
+    save_pr: false
+  ablation:
+    tags: []
+    overrides: {}
+
+artifacts:
+  save_checkpoint: true
+  save_detector: true
+  save_intermediates: true
+  format: pt

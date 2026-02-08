@@ -1,0 +1,45 @@
+data:
+  optc:
+    # Data Paths
+    train_path: "D:\\data1\\AIA-51-75.ecar-last 19day.json\\AIA-51-75.ecar-last 19day.json"
+    test_path: "D:\\data1\\AIA-51-75.ecar-last25day.json\\AIA-51-75.ecar-last25day.json"
+    
+    # Cache Settings
+    cache_dir: "D:\\data1\\ecar_slices\\cache"
+    use_cache: true
+    
+    # Time Filtering (Optional, set to null to read all)
+    # Example for 25day slice
+    time_range: null
+    #   start: "2019-09-25T09:00:00-04:00"
+    #   end: "2019-09-25T15:00:00-04:00"
+      
+    # Windowing
+    window_minutes: 15
+    max_events_per_window: 20000
+    
+    # Host Filter (Optional, list of hostnames)
+    host_filter: null 
+    #  - "SysClient0052.systemia.com"
+    
+    # View Mapping (Override default)
+    view_mapping:
+      network: ["FLOW"]
+      file: ["FILE", "REGISTRY"]
+      process: ["PROCESS", "THREAD", "MODULE", "SHELL", "TASK", "USER_SESSION"]
+
+training:
+  epochs: 10
+  batch_size: 32
+  learning_rate: 0.001
+
+model:
+  # Quality
+  quality_softmax_temp: 0.5
+  
+  # Step 1
+  slot_seconds: 60
+  
+  # Step 3 Detector
+  drift_lr: 0.01
+  threshold_quantile: 0.90
