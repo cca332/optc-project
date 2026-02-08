@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 runs/
-data/
+/data/
 results*/
 .DS_Store
 *.pt
