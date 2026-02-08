@@ -17,6 +17,7 @@ data:
     # Windowing
     window_minutes: 15
     max_events_per_window: 20000
+    chunk_size: 100 # Optimized for IO
     
     # Host Filter (Optional, list of hostnames)
     host_filter: null 
@@ -29,9 +30,33 @@ data:
       process: ["PROCESS", "THREAD", "MODULE", "SHELL", "TASK", "USER_SESSION"]
 
 training:
-  epochs: 10
+  federated_learning: false # [SWITCH] Toggle between Centralized and Federated
+  epochs: 5 
   batch_size: 32
-  learning_rate: 0.001
+  learning_rate: 1.0e-5 # Step 1 LR (LoRA fine-tuning)
+  output_dir: "results4"
+  seed: 42
+  num_workers: 4 # [OPTIMIZED] DataLoader workers (set to 0 for debugging)
+  
+  # Teacher Pretraining
+  teacher:
+    epochs: 5
+    lr: 1.0e-5
+    temp: 0.1
+    
+  # Federated Client Training
+  client:
+    local_epochs: 5
+    batch_size: 16
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    lambda_stats: 50.0
+    lambda_infonce: 1.0
+    temp_params:
+      a: 2.0
+      b: 1.0
+      min_tau: 0.05
+      max_tau: 0.2
 
 model:
   # Quality
@@ -39,7 +64,33 @@ model:
   
   # Step 1
   slot_seconds: 60
+  num_hash_buckets: 50
+  target_dim: 32
+  router_hidden_dims: [64]
+  num_subspaces: 4
+  gate_gamma: 0.5
+  gate_beta: 5.0
+  max_vocab_types: 500
+  
+  # Step 2 & Teacher
+  subspace_dim: 16
+  behavior_dim: 128
+  
+  # LoRA
+  lora_rank: 4
   
   # Step 3 Detector
   drift_lr: 0.01
   threshold_quantile: 0.90
+  
+  # DP Settings
+  feature_dp:
+    enabled: true
+    clip_C: 10.0
+    noise_sigma: 0.01
+    
+  grad_dp:
+    enabled: false
+    base_clip_C0: 1.0
+    importance_alpha: 0.0
+    noise_sigma0: 0.0

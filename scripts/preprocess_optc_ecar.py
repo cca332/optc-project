@@ -184,7 +184,7 @@ def process_file(file_path: str, output_dir: str, prefix: str, cfg: dict):
                                       max_events_per_window=max_events)
     
     # 3. Processing Loop
-    chunk_size = 5  # [USER REQ] Increased for speed
+    chunk_size = cfg.get("chunk_size", 100)  # [OPTIMIZED] Read from config, default to 100
     chunk_buffer = []
     chunk_idx = 0
     total_samples = 0

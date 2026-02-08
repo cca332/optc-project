@@ -47,8 +47,17 @@ def main():
 
     cache_dir = optc_cfg["cache_dir"]
     # [MODIFIED] Use 'results4' for LoRA + Large Events run
-    output_dir = "results4"
+    output_dir = train_cfg.get("output_dir", "results4")
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Set Seed
+    seed = train_cfg.get("seed", 42)
+    torch.manual_seed(seed)
+    import numpy as np
+    import random
+    np.random.seed(seed)
+    random.seed(seed)
+    print(f"[Runner] Seed set to {seed}")
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[Runner] Using device: {device}")
@@ -70,8 +79,8 @@ def main():
     total_samples = len(train_dataset)
     
     # [USER REQ] Switch to Centralized Training to diagnose collapse
-    FEDERATED_LEARNING = False 
-
+    FEDERATED_LEARNING = train_cfg.get("federated_learning", False)
+    
     teacher_indices = []
     val_indices = []
     student_indices = []
@@ -133,10 +142,14 @@ def main():
     print(f"[Runner] Data Split: Teacher={len(teacher_subset)}, Val={len(val_subset)}, Student={len(student_subset)}")
     print(f"         (Expected: ~50 Teacher, ~50 Val, ~425 Student)")
 
-    teacher_loader = DataLoader(teacher_subset, batch_size=32, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_subset, batch_size=32, shuffle=False, collate_fn=collate_fn)
-    student_loader = DataLoader(student_subset, batch_size=32, shuffle=True, collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
+    # [OPTIMIZATION] DataLoader settings
+    num_workers = train_cfg.get("num_workers", 0)
+    pin_memory = torch.cuda.is_available()
+    
+    teacher_loader = DataLoader(teacher_subset, batch_size=32, shuffle=True, collate_fn=collate_fn, num_workers=num_workers, pin_memory=pin_memory)
+    val_loader = DataLoader(val_subset, batch_size=32, shuffle=False, collate_fn=collate_fn, num_workers=num_workers, pin_memory=pin_memory)
+    student_loader = DataLoader(student_subset, batch_size=32, shuffle=True, collate_fn=collate_fn, num_workers=num_workers, pin_memory=pin_memory)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn, num_workers=num_workers, pin_memory=pin_memory)
 
     # -------------------------------------------------------------------------
     # 2. Initialize Models
@@ -146,7 +159,7 @@ def main():
     
     epochs = train_cfg.get("epochs", 5)
     batch_size = train_cfg.get("batch_size", 32)
-    lr = 1e-5 # [MODIFIED] Extremely low LR for LoRA fine-tuning
+    lr = float(train_cfg.get("learning_rate", 1e-5)) # [MODIFIED] Extremely low LR for LoRA fine-tuning
     
     # Config for Step 1
     quality_cfg = QualityWeightsConfig(
@@ -161,20 +174,20 @@ def main():
         window_seconds=optc_cfg.get("window_minutes", 15) * 60,
         slot_seconds=model_cfg.get("slot_seconds", 60),
         include_empty_slot_indicator=True,
-        num_hash_buckets=50,
+        num_hash_buckets=model_cfg.get("num_hash_buckets", 50),
         hash_seed=42,
-        target_dim=32,
+        target_dim=model_cfg.get("target_dim", 32),
         rp_seed=123,
         rp_matrix_type="gaussian",
         rp_normalize="l2",
         rp_nonlinearity="relu",
         quality_cfg=quality_cfg,
-        router_hidden_dims=[64],
+        router_hidden_dims=model_cfg.get("router_hidden_dims", [64]),
         router_dropout=0.1,
-        num_subspaces=4,
-        gate_gamma=0.5,
+        num_subspaces=model_cfg.get("num_subspaces", 4),
+        gate_gamma=model_cfg.get("gate_gamma", 0.5),
         gate_mode="soft",
-        gate_beta=5.0,
+        gate_beta=model_cfg.get("gate_beta", 5.0),
         interaction_enabled=True
     )
     
@@ -216,7 +229,7 @@ def main():
     step1 = Step1Model(s1_cfg, per_view_schema).to(device)
     
     # Fit Vocabs (or skip if cached) and Init Projectors
-    step1.fit_vocabs_and_init_projectors(vocab_samples, max_types=500)
+    step1.fit_vocabs_and_init_projectors(vocab_samples, max_types=model_cfg.get("max_vocab_types", 500))
     
     # [OPTIMIZATION] Fit Quality Stats for Standardization (Balance Entropy vs Intensity)
     print("[Runner] Fitting Quality Stats for Standardization...")
@@ -295,9 +308,10 @@ def main():
     step1.alignment.requires_grad_(False) 
     
     # Apply LoRA to Router (MLP)
-    apply_lora(step1.router, rank=4)
+    lora_rank = model_cfg.get("lora_rank", 4)
+    apply_lora(step1.router, rank=lora_rank)
     # Apply LoRA to Fusion (Projections)
-    apply_lora(step1.fusion, rank=4)
+    apply_lora(step1.fusion, rank=lora_rank)
     
     print("[Runner] LoRA injection complete. Step 1 Base frozen, Adapters trainable.")
 
@@ -312,7 +326,7 @@ def main():
     gc.collect()
     
     # Step 2 Models
-    subspace_dim = 16
+    subspace_dim = model_cfg.get("subspace_dim", 16)
     student = StudentHeads(in_dim=32, num_subspaces=4, subspace_dim=subspace_dim, hidden_dim=64).to(device)
     
     # [FIX] Replace ReLU in Student Heads to prevent dead neurons
@@ -320,11 +334,16 @@ def main():
     
     # Teacher Setup (A1/A2/A3)
     # A2: Behavioral Feature Dimension
-    behavior_dim = 128 
+    behavior_dim = model_cfg.get("behavior_dim", 128)
     teacher = TeacherModel(behavior_dim=behavior_dim, num_subspaces=4, subspace_dim=subspace_dim, hidden_dim=64).to(device)
     
     # A2: DP Config
-    dp_cfg = FeatureDPConfig(enabled=True, clip_C=10.0, noise_sigma=0.01)
+    dp_params = model_cfg.get("feature_dp", {})
+    dp_cfg = FeatureDPConfig(
+        enabled=dp_params.get("enabled", True), 
+        clip_C=dp_params.get("clip_C", 10.0), 
+        noise_sigma=dp_params.get("noise_sigma", 0.01)
+    )
     
     uras_dim = 4 * subspace_dim
     
@@ -345,17 +364,19 @@ def main():
     # 3. Phase 1: Teacher Self-Supervised Learning (A3: InfoNCE)
     # -------------------------------------------------------------------------
     print("\n[Runner] === Phase 1: Teacher Pretraining (A3: InfoNCE) ===")
+    teacher_cfg = train_cfg.get("teacher", {})
+    
     teacher_ckpt_path = os.path.join(output_dir, "teacher_checkpoint.pt")
     if os.path.exists(teacher_ckpt_path):
         print(f"[Runner] Found teacher checkpoint at {teacher_ckpt_path}. Loading...")
         teacher.load_state_dict(torch.load(teacher_ckpt_path, map_location=device))
         print("[Runner] Teacher loaded.")
     else:
-        teacher_optimizer = torch.optim.Adam(teacher.parameters(), lr=lr)
+        teacher_optimizer = torch.optim.Adam(teacher.parameters(), lr=float(teacher_cfg.get("lr", lr)))
         teacher.train()
         
         teacher_loss_history = []
-        phase1_epochs = 5
+        phase1_epochs = teacher_cfg.get("epochs", 5)
         
         for epoch in range(phase1_epochs):
             epoch_loss = 0.0
@@ -374,7 +395,7 @@ def main():
                 b_dp = dp_features(b_features, dp_cfg)
                 
                 # A3: InfoNCE Loss
-                loss_nce = teacher.forward_contrastive(b_dp, temp=0.1)
+                loss_nce = teacher.forward_contrastive(b_dp, temp=float(teacher_cfg.get("temp", 0.1)))
                 
                 teacher_optimizer.zero_grad()
                 loss_nce.backward()
@@ -500,16 +521,32 @@ def main():
     # 1. Batch Size = 16 (Requested by user)
     # 2. Local Epochs = 5 (Aggressive learning for small data)
     # A2: Client Config
+    client_cfg = train_cfg.get("client", {})
+    dp_params = model_cfg.get("feature_dp", {})
+    dp_cfg = FeatureDPConfig(
+        enabled=dp_params.get("enabled", True), 
+        clip_C=dp_params.get("clip_C", 10.0), 
+        noise_sigma=dp_params.get("noise_sigma", 0.01)
+    )
+    
+    grad_dp_params = model_cfg.get("grad_dp", {})
+    grad_dp_cfg = GradDPConfig(
+        enabled=grad_dp_params.get("enabled", False),
+        base_clip_C0=grad_dp_params.get("base_clip_C0", 1.0),
+        importance_alpha=grad_dp_params.get("importance_alpha", 0.0),
+        noise_sigma0=grad_dp_params.get("noise_sigma0", 0.0)
+    )
+    
     client_train_cfg = ClientTrainConfig(
-        local_epochs=5,       # [TUNED] Increased from 3 to 5 (Aggressive)
-        batch_size=16,        # [USER REQ] Reduced to 16 to fit local data (approx 17 samples/client)
-        lr=1e-4,              # [TUNED] Reduced to 1e-4 to prevent collapse
-        weight_decay=1e-4,
-        lambda_stats=50.0,    # [TUNED] Increased to 50.0 to strongly force statistical alignment (Anti-Collapse)
-        lambda_infonce=1.0,   # [CRITICAL] Balanced mimicry
-        temp_params={"a": 2.0, "b": 1.0, "min_tau": 0.05, "max_tau": 0.2}, # [TUNED] Lower max_tau for sharper distillation
+        local_epochs=client_cfg.get("local_epochs", 5),
+        batch_size=client_cfg.get("batch_size", 16),
+        lr=float(client_cfg.get("lr", 1e-4)),
+        weight_decay=float(client_cfg.get("weight_decay", 1e-4)),
+        lambda_stats=float(client_cfg.get("lambda_stats", 50.0)),
+        lambda_infonce=float(client_cfg.get("lambda_infonce", 1.0)),
+        temp_params=client_cfg.get("temp_params", {"a": 2.0, "b": 1.0, "min_tau": 0.05, "max_tau": 0.2}),
         feature_dp=dp_cfg,
-        grad_dp=GradDPConfig(enabled=False, base_clip_C0=1.0, importance_alpha=0.0, noise_sigma0=0.0), # DISABLE DP to verify learning capability
+        grad_dp=grad_dp_cfg,
         views=views,
         behavior_feature_dim=behavior_dim
     )
