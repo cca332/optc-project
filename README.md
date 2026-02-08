@@ -26,6 +26,26 @@ python scripts/infer.py --config configs/default.yaml
 python scripts/evaluate.py --config configs/default.yaml
 ```
 
+## 检测结果与真实标签对齐评估
+
+模型检测结果会输出为 `detection_results.csv`（如由 `scripts/run_pipeline.py` 生成），字段依次为：`timestamp`、`host`、`anomaly_score`、`adaptive_threshold`、`is_anomaly`、`top_attribution`。使用根目录下的独立脚本 `evaluate_detection_with_ground_truth.py` 可根据写死的真实攻击标签（UTC）计算准确率、精确率、召回率、F1、AUC、AUPRC 等指标。**标准时间以 UTC 为准**；真实标签在脚本内按 UTC 写死。
+
+**使用方式：**
+
+```bash
+# 默认：CSV 视为已是 UTC，直接与真实标签对齐
+python evaluate_detection_with_ground_truth.py
+
+# 指定 CSV 路径
+python evaluate_detection_with_ground_truth.py results4/detection_results.csv
+
+# 若模型生成的 CSV 时间为 EDT（东部时间），需先转为 UTC 再对齐时，加上 --csv-edt
+python evaluate_detection_with_ground_truth.py --csv-edt
+python evaluate_detection_with_ground_truth.py results4/detection_results.csv --csv-edt
+```
+
+脚本会打印指标并将结果写入同目录下的 `*_metrics.json`（若未指定 CSV 路径则写 `detection_metrics.json`）。
+
 ## 真实数据接入你需要做什么？
 
 1. 在 `src/optc_uras/data/raw_reader.py` 中实现 `RawReader`（把你们的 PIDSMaker 预处理输出读成统一事件结构）。
