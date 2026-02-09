@@ -25,15 +25,15 @@ class SCDProjector(nn.Module):
         # P_s: Style Projector (风格投影头)
         if hidden_dim > 0:
             self.p_s = nn.Sequential(
-                nn.Linear(self.in_dim, int(hidden_dim)),
+                nn.Linear(self.in_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(int(hidden_dim), self.style_dim)
+                nn.Linear(hidden_dim, self.style_dim)
             )
             # P_c: Content Projector (内容投影头)
             self.p_c = nn.Sequential(
-                nn.Linear(self.in_dim, int(hidden_dim)),
+                nn.Linear(self.in_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(int(hidden_dim), self.content_dim)
+                nn.Linear(hidden_dim, self.content_dim)
             )
         else:
             # Linear projection (default as per simple implementation)
@@ -46,9 +46,9 @@ class SCDProjector(nn.Module):
         decoder_in = self.style_dim + self.content_dim
         if hidden_dim > 0:
              self.decoder = nn.Sequential(
-                nn.Linear(decoder_in, int(hidden_dim)),
+                nn.Linear(decoder_in, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(int(hidden_dim), self.in_dim)
+                nn.Linear(hidden_dim, self.in_dim)
             )
         else:
             self.decoder = nn.Linear(decoder_in, self.in_dim)

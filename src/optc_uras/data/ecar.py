@@ -1,5 +1,6 @@
-from __future__ import annotations
-
+"""
+OpTC eCAR data reader and window aggregator.
+"""
 import json
 import logging
 from collections import defaultdict
@@ -32,7 +33,9 @@ class EcarJsonlReader:
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         try:
-            with open(self.file_path, "r", encoding="utf-8") as f:
+            import gzip
+            open_func = gzip.open if self.file_path.endswith(".gz") else open
+            with open_func(self.file_path, "rt", encoding="utf-8") as f:
                 for line in f:
                     if not line.strip():
                         continue
@@ -84,6 +87,7 @@ class WindowAggregator:
                  max_events_per_window: int = 20000):
         self.window_delta = timedelta(minutes=window_minutes)
         self.max_events = max_events_per_window
+        self.event_counter = 0  # For controlling flush frequency
         
         # Statistics for dropped events
         self.stats = {
@@ -120,7 +124,8 @@ class WindowAggregator:
             "t0": start_ms,
             "t1": end_ms,
             "views": {v: [] for v in set(self.obj_to_view.values())},
-            "label": 0  # Default benign
+            "label": 0,  # Default benign
+            "_truncated_views": set()  # Track which views have been truncated
         }
 
     def process(self, event_stream: Iterator[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
@@ -144,9 +149,11 @@ class WindowAggregator:
             if key not in self.buffer:
                 self.buffer[key] = self._init_sample(hostname, w_start)
             
-            # Add event if not full
+            # Add event if not full (Global Limit Check)
             sample = self.buffer[key]
-            if len(sample["views"][view_name]) < self.max_events:
+            current_total = sum(len(v) for v in sample["views"].values())
+            
+            if current_total < self.max_events:
                 # Essential fields for training
                 clean_event = {
                     "timestamp": event.get("timestamp"),
@@ -159,9 +166,11 @@ class WindowAggregator:
             else:
                 # Track dropped stats
                 self.stats["dropped_events"][view_name] += 1
-                if len(sample["views"][view_name]) == self.max_events:
-                     # Count this window as truncated only once per view
-                     self.stats["truncated_windows"][view_name] += 1
+                
+                # Count this window as truncated only once per view
+                if view_name not in sample["_truncated_views"]:
+                    self.stats["truncated_windows"][view_name] += 1
+                    sample["_truncated_views"].add(view_name)
 
             # Watermark check for flush (simple strategy: flush windows older than 2 windows ago)
             # This assumes data is mostly sorted.
@@ -181,6 +190,9 @@ class WindowAggregator:
         keys_to_remove = []
         for key, sample in self.buffer.items():
             if sample["t1"] < threshold_ms:
+                # Remove internal tracking field before yielding
+                sample.pop("_truncated_views", None)
+                self.stats["processed_windows"] += 1
                 yield sample
                 keys_to_remove.append(key)
         
@@ -189,6 +201,8 @@ class WindowAggregator:
 
     def _flush_all(self) -> Iterator[Dict[str, Any]]:
         for sample in self.buffer.values():
+            sample.pop("_truncated_views", None)
+            self.stats["processed_windows"] += 1
             yield sample
         self.buffer.clear()
         

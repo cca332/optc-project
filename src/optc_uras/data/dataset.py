@@ -35,7 +35,7 @@ class OpTCEcarDataset(Dataset):
         if not os.path.exists(self.cache_dir):
             raise FileNotFoundError(f"Cache directory not found: {self.cache_dir}")
 
-        files = sorted([f for f in os.listdir(self.cache_dir) if f.endswith(".pkl")])
+        files = sorted([f for f in os.listdir(self.cache_dir) if f.endswith(".pt") or f.endswith(".pkl")])
         loaded_count = 0
         
         logger.info(f"Scanning {len(files)} files for indexing (Lazy Loading)...")
@@ -47,14 +47,19 @@ class OpTCEcarDataset(Dataset):
                 
             path = os.path.join(self.cache_dir, f)
             try:
-                with open(path, "rb") as fp:
-                    chunk = pickle.load(fp)
-                    if isinstance(chunk, list):
-                        num_samples = len(chunk)
-                        for i in range(num_samples):
-                            self.index_map.append((path, i))
-                        loaded_count += 1
-                    del chunk
+                # Support both .pt and .pkl
+                if f.endswith(".pt"):
+                    chunk = torch.load(path, map_location="cpu")
+                else:
+                    with open(path, "rb") as fp:
+                        chunk = pickle.load(fp)
+                        
+                if isinstance(chunk, list):
+                    num_samples = len(chunk)
+                    for i in range(num_samples):
+                        self.index_map.append((path, i))
+                    loaded_count += 1
+                del chunk
             except Exception as e:
                 logger.warning(f"Failed to scan cache file {f}: {e}")
 
@@ -71,9 +76,13 @@ class OpTCEcarDataset(Dataset):
         fpath, local_idx = self.index_map[idx]
         
         # This is slow (IO every time), but memory safe.
-        with open(fpath, "rb") as f:
-            chunk = pickle.load(f)
+        if fpath.endswith(".pt"):
+            chunk = torch.load(fpath, map_location="cpu")
             return chunk[local_idx]
+        else:
+            with open(fpath, "rb") as f:
+                chunk = pickle.load(f)
+                return chunk[local_idx]
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
