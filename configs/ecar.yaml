@@ -1,12 +1,22 @@
 data:
   optc:
-    # Data Paths
-    train_path: "D:\\data1\\AIA-51-75.ecar-last 19day.json\\AIA-51-75.ecar-last 19day.json"
-    test_path: "D:\\data1\\AIA-51-75.ecar-last25day.json\\AIA-51-75.ecar-last25day.json"
+    data_dir: "data/raw"  # Raw JSONL files
+    cache_dir: "/root/autodl-tmp/cache_tuning"  # Preprocessed cache (Data Disk)
     
-    # Cache Settings
-    cache_dir: "D:\\data1\\ecar_slices\\cache"
-    use_cache: true
+    # Dataset Paths & Prefixes
+    # Train: 17-19day (Truncated/Sampled)
+    train_path: "data/raw/train.jsonl"
+    train_prefix: "train"
+    
+    # Validation: 20day (Full/Complete)
+    val_path: "data/raw/val.jsonl"
+    val_prefix: "val"
+    
+    # Test: 25day (Full/Complete)
+    test_path: "data/raw/test.jsonl"
+    test_prefix: "test"
+
+    max_seq_len: 128
     
     # Time Filtering (Optional, set to null to read all)
     # Example for 25day slice
@@ -62,12 +72,13 @@ model:
   # Quality
   quality_softmax_temp: 0.5
   
-  # Step 1
+  # Step 1 Configuration
   slot_seconds: 60
   num_hash_buckets: 50
   target_dim: 32
   router_hidden_dims: [64]
   num_subspaces: 4
+  # LoRA Settings (for Router/Fusion)
   gate_gamma: 0.5
   gate_beta: 5.0
   max_vocab_types: 500
@@ -76,12 +87,40 @@ model:
   subspace_dim: 16
   behavior_dim: 128
   
+  # Teacher Pretraining (Phase 1)
+  teacher:
+    epochs: 5
+    lr: 1.0e-4
+    temp: 0.1
+    augment_mask_p: 0.2
+    augment_noise_std: 0.01
+  
   # LoRA
   lora_rank: 4
+  lora_alpha: 8
   
   # Step 3 Detector
   drift_lr: 0.01
   threshold_quantile: 0.90
+  
+  # SCD Loss Weights
+  scd_loss:
+    lambda_d: 1.0
+    lambda_r: 1.0
+    lambda_v: 25.0
+    gamma: 5.0
+    
+  # ATC Parameters (Adaptive Threshold Correction)
+  atc:
+    alpha_conf: 0.0
+    alpha_unc: 0.0
+    alpha_risk: 0.0
+    
+  # View Sensitivities (for Risk calculation)
+  view_sensitivities:
+    process: 1.0
+    file: 1.0
+    network: 1.0
   
   # DP Settings
   feature_dp:

@@ -10,11 +10,9 @@ import torch.nn as nn
 from ..features.deterministic_aggregator import AggregatorSchema, DeterministicStatsAggregator
 from ..features.random_projection import FixedRandomProjector
 from ..features.quality import QualityWeighter, QualityWeightsConfig
-from ..features.slots import split_into_slots
-from ..typing import Step1Outputs
-from .routing import RouterMLP
-from .alignment import AlignmentBases
-from .fusion import GatedFusion
+from ..utils.slots import split_into_slots
+from ..utils.typing import Step1Outputs
+from .components import RouterMLP, AlignmentBases, GatedFusion
 
 
 @dataclass
@@ -45,13 +43,15 @@ class Step1Model(nn.Module):
 
     确定性部分：
       - slots 划分
-      - 确定性聚合器
-      - 固定随机投影
+      - 确定性聚合器 (Deterministic Aggregator)
+      - 固定随机投影 (Fixed Random Projection)
 
     可学习部分（Step2 联邦训练会更新）：
-      - 路由器
-      - 对齐基矩阵
-      - 注意力交互（可选）
+      - 路由器 (Router): 使用 LoRA 进行低秩适配，防止联邦场景下的过拟合。
+      - 对齐基矩阵 (Alignment): 可学习的线性变换，将不同视图对齐到同一空间。
+      - 注意力交互 (Fusion): 门控融合机制。
+      
+    注：Base Model (Router/Fusion) 处于解冻状态 (Unfrozen)，配合 LoRA 进行全量微调 + 低秩增强。
     """
 
     def __init__(self, cfg: Step1Config, per_view_schema: Dict[str, AggregatorSchema]):
@@ -132,6 +132,75 @@ class Step1Model(nn.Module):
         slot_emb = proj(slot_vecs)  # [K, d]
         return slot_emb.astype(np.float32), slots
 
+    def forward_fast(self, slot_tensor: torch.Tensor, view_summary: torch.Tensor, w: torch.Tensor) -> Step1Outputs:
+        """
+        Optimized forward pass using pre-computed tensors.
+        Skips slot extraction and quality computation (IO bound parts).
+        
+        Args:
+            slot_tensor: [B, K, V, d] Pre-computed slot embeddings
+            view_summary: [B, V, d] Pre-computed masked mean of slots (or compute here if cheap)
+            w: [B, V] Pre-computed quality weights
+        """
+        B, K, V, d = slot_tensor.shape
+        device = slot_tensor.device
+        
+        # Note: view_summary can be re-computed from slot_tensor if not passed, 
+        # but better passed if already available. 
+        # Actually, in make_fast_cache we saved slots [N, K, V, d] and quality [N, V, 3].
+        # We need to compute 'w' and 'view_summary' from these.
+        
+        # Let's assume input is JUST slots and quality metrics, 
+        # and we compute w and summary here. This keeps 'learnable' logic intact if quality fusion was learnable (it's not).
+        # But 'w' computation is fast.
+        
+        # Wait, forward_fast should match forward's output exactly.
+        
+        # inject reliability into view vecs (scale)
+        view_vecs = view_summary * w.unsqueeze(-1)
+
+        # routing
+        router_in = view_vecs.reshape(B, V * d)
+        route_p = self.router(router_in)  # [B,M]
+
+        # alignment operator
+        A = self.alignment(route_p)  # [B,d,d]
+        aligned_slots = self.alignment.apply(A, slot_tensor)  # [B,K,V,d]
+        aligned_view_vecs = aligned_slots.mean(dim=1)  # [B,V,d]
+
+        # gating fusion
+        z, gate, rho_bar = self.fusion(aligned_view_vecs, w)
+
+        # Return list of outputs to match interface, OR batch object?
+        # Standard interface returns List[Step1Outputs]. We keep it for compatibility.
+        
+        intermediates = {
+            "gate": gate.detach(), 
+            "rho_bar": rho_bar.detach(), 
+            "w_entropy": (-(w * (w.clamp_min(1e-8)).log()).sum(dim=1) / np.log(max(V, 2))),
+            "route_entropy": (-(route_p * (route_p.clamp_min(1e-8)).log()).sum(dim=1) / np.log(max(route_p.shape[1], 2)))
+        }
+
+        outs: List[Step1Outputs] = []
+        for b in range(B):
+            outs.append(
+                Step1Outputs(
+                    view_names=self.views,
+                    view_vecs=aligned_view_vecs[b],
+                    reliability_w=w[b],
+                    route_p=route_p[b],
+                    z=z[b],
+                    intermediates={
+                        "gate": float(intermediates["gate"][b].item()),
+                        "rho_bar": float(intermediates["rho_bar"][b].item()),
+                        "w_entropy": float(intermediates["w_entropy"][b].item()),
+                        "route_entropy": float(intermediates["route_entropy"][b].item()),
+                        # Quality detail skipped for speed
+                    },
+                )
+            )
+        return outs
+
     def forward(self, batch_samples: Sequence[Dict[str, Any]]) -> Step1Outputs:
         B = len(batch_samples)
         V = len(self.views)
@@ -205,6 +274,93 @@ class Step1Model(nn.Module):
                     z=z[b],
                     intermediates={
                         "quality": intermediates["quality"][b],
+                        "gate": float(gate[b].item()),
+                        "rho_bar": float(rho_bar[b].item()),
+                        "w_entropy": float((-(w[b] * (w[b].clamp_min(1e-8)).log()).sum() / np.log(max(V, 2))).item()),
+                        "route_entropy": float((-(route_p[b] * (route_p[b].clamp_min(1e-8)).log()).sum() / np.log(max(route_p.shape[1], 2))).item()),
+                    },
+                )
+            )
+        return outs
+
+    def forward_from_cache(self, slot_tensor: torch.Tensor, quality_tensor: torch.Tensor) -> Step1Outputs:
+        """
+        Forward pass starting from cached slots and quality metrics.
+        slot_tensor: [B, K, V, d]
+        quality_tensor: [B, V, 4] (validity, completeness, entropy, intensity)
+        """
+        B, K, V, d = slot_tensor.shape
+        device = slot_tensor.device
+        
+        # 1. Compute Quality Weights 'w'
+        # Reconstruct dicts for compatibility with QualityWeighter
+        # quality_tensor is [B, V, 4]
+        
+        q_per_view_list_batch = [] # List[List[Dict]]
+        fused_scores_batch = [] # List[List[float]]
+        w_batch = []
+        q_per_view_batch_dicts = []
+        
+        # Move quality to CPU for numpy operations in QualityWeighter
+        q_np = quality_tensor.detach().cpu().numpy()
+        
+        for b in range(B):
+            q_per_view_list = []
+            fused_scores = []
+            q_per_view_dict = {}
+            for v_idx, v_name in enumerate(self.views):
+                q_vec = q_np[b, v_idx]
+                qv = {
+                    "validity": float(q_vec[0]),
+                    "completeness": float(q_vec[1]),
+                    "entropy": float(q_vec[2]),
+                    "intensity": float(q_vec[3])
+                }
+                q_per_view_list.append(qv)
+                q_per_view_dict[v_name] = qv
+                fused_scores.append(self.quality.fuse(qv))
+            
+            q_per_view_list_batch.append(q_per_view_list)
+            q_per_view_batch_dicts.append(q_per_view_dict)
+            fused_scores_batch.append(fused_scores)
+            
+            w_np = self.quality.compute_final_weights(q_per_view_list, fused_scores)
+            w_batch.append(torch.from_numpy(w_np))
+            
+        w = torch.stack(w_batch).to(device) # [B, V]
+        
+        # 2. Compute View Summary (Masked Mean)
+        # Note: We use simple mean here as we don't have raw event counts for masking.
+        # This is an approximation for speed.
+        view_summary = slot_tensor.mean(dim=1) # [B, V, d]
+        
+        # 3. Rest of the forward pass
+        # inject reliability into view vecs (scale)
+        view_vecs = view_summary * w.unsqueeze(-1)
+
+        # routing
+        router_in = view_vecs.reshape(B, V * d)
+        route_p = self.router(router_in)  # [B,M]
+
+        # alignment operator
+        A = self.alignment(route_p)  # [B,d,d]
+        aligned_slots = self.alignment.apply(A, slot_tensor)  # [B,K,V,d]
+        aligned_view_vecs = aligned_slots.mean(dim=1)  # [B,V,d]
+
+        # gating fusion
+        z, gate, rho_bar = self.fusion(aligned_view_vecs, w)
+        
+        outs: List[Step1Outputs] = []
+        for b in range(B):
+            outs.append(
+                Step1Outputs(
+                    view_names=self.views,
+                    view_vecs=aligned_view_vecs[b],
+                    reliability_w=w[b],
+                    route_p=route_p[b],
+                    z=z[b],
+                    intermediates={
+                        "quality": q_per_view_batch_dicts[b],
                         "gate": float(gate[b].item()),
                         "rho_bar": float(rho_bar[b].item()),
                         "w_entropy": float((-(w[b] * (w[b].clamp_min(1e-8)).log()).sum() / np.log(max(V, 2))).item()),

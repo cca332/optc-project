@@ -41,7 +41,7 @@ def dp_features(x: torch.Tensor, cfg: FeatureDPConfig) -> torch.Tensor:
     if not cfg.enabled:
         return x
     x = x.clone()
-    # per-sample clipping + noise (最小骨架实现)
+    # per-sample clipping + noise (Standard Gaussian Mechanism)
     if x.ndim == 2:
         for i in range(x.shape[0]):
             clip_by_l2_norm_(x[i], cfg.clip_C)
@@ -53,9 +53,10 @@ def dp_features(x: torch.Tensor, cfg: FeatureDPConfig) -> torch.Tensor:
 
 
 def dp_gradients(param_grads: List[torch.Tensor], cfg: GradDPConfig, importance: Optional[torch.Tensor] = None) -> List[torch.Tensor]:
-    """对参数梯度做裁剪+噪声（最小骨架版）。
+    """对参数梯度做裁剪+噪声。
 
-    importance: 可选 [G] 因子（均值约 1），用于自适应裁剪/噪声。
+    支持自适应裁剪 (Adaptive Clipping) 与 风险自适应噪声 (Risk-Adaptive Noise)。
+    importance: 可选 [G] 因子（均值约 1），用于自适应调整裁剪阈值 C 与噪声 sigma。
     """
     if not cfg.enabled:
         return param_grads

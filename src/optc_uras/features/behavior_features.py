@@ -4,11 +4,11 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 
 # Step2 A2：客户端不可逆行为特征（统计/结构摘要拼接）
-# 这里给一个“固定维度”的最小骨架实现：
+# 实现：
 #   - 前 2*V 维：每个 view 的 [event_count, unique_obj_count]
-#   - 剩余维：hash-bucket 计数（不可逆），再做归一化
-#
-# 真实工程可把进程树深度分布等结构摘要拼进来，只要保证不可逆、维度固定即可。
+#   - 熵特征：Type Entropy (Distribution Summary)
+#   - 结构特征：Max Object Frequency Ratio (Concentration)
+#   - 剩余维：Stable Hash Bucket 计数（不可逆映射）
 
 
 def behavior_features_from_sample(

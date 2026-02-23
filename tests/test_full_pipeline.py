@@ -12,7 +12,7 @@ from optc_uras.features.quality import QualityWeightsConfig
 from optc_uras.models.step1 import Step1Config, Step1Model
 from optc_uras.models.student import StudentHeads, uras_from_subspaces
 from optc_uras.models.detector import AnomalyDetector
-from optc_uras.typing import Step1Outputs
+from optc_uras.utils.typing import Step1Outputs
 
 def test_full_pipeline_integration():
     """
@@ -32,7 +32,7 @@ def test_full_pipeline_integration():
     
     # Step 1 Config
     quality_cfg = QualityWeightsConfig(
-        weights={"completeness": 1.0}, 
+        reliability_weights={"completeness": 1.0}, 
         standardize="minmax"
     )
     step1_cfg = Step1Config(
