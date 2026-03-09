@@ -1,0 +1,31 @@
+dataset.py
+(1) 从磁盘缓存里把 OpTC eCAR 的“按窗口聚合后的样本”读出来；
+(2) 定义了几种 Dataset/Collate 方便 DataLoader 训练/推理；
+(3) 为“Step1 用原始样本、Step2 用行为特征/张量”这两条数据流做适配。
+
+ecar.py
+把原始 OpTC eCAR 的 JSONL 事件流（可 gzip）按 host × 15min 聚合成样本，
+并且把每条原始 event 清洗成你们 Step1 需要的字段（尤其是 ts/op/type/obj/valid
++ 若干 properties 字段），最后可选做“超大窗口的随机采样增强”。
+
+sample 的初始化结构
+{
+  "host": hostname,
+  "t0": start_ms,
+  "t1": end_ms,
+  "views": { "process":[], "file":[], "network":[] },  # 取决于 mapping
+  "label": 0,  # 默认 benign
+  "_truncated_views": set()  # 内部统计用
+}
+
+processed_io.py
+把“已经按窗口聚合好的样本列表（List[Sample]）”保存成 .pt 文件，
+以及从 .pt 文件里再读回来。
+
+raw_reader.py
+把原始 OpTC JSONL 文件 → 直接产出“最终可训练的 host×15min 样本（带增强采样）”
+是把你前面那两块模块 Reader + WindowAggregator 再包一层，形成一个统一接口。
+
+splits.py
+把已经生成好的样本列表，随机划分成 train / val / test 三个子集，并把“索引划分结果”保存下来。
+它不复制样本数据本身，只保存“索引列表”。

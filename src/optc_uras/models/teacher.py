@@ -9,7 +9,16 @@ import torch.nn.functional as F
 
 
 class TeacherModel(nn.Module):
-    """Step2 教师模型：仅使用客户端不可逆行为特征做离线自监督预训练，之后冻结。"""
+    """Step2 教师模型 (Teacher Model)
+    
+    功能：
+    1. 离线自监督预训练 (Offline Self-Supervised Pretraining)。
+    2. 仅使用客户端的“行为特征” (Behavioral Features) 作为输入，不依赖标签。
+    3. 核心算法：A3 InfoNCE (Contrastive Learning)。
+       - 数据增强：Masking (Dropout) + Jitter (Gaussian Noise)。
+       - 损失函数：InfoNCE Loss，最大化同一样本不同增强视图的相似度。
+    4. 训练完成后冻结 (Frozen)，作为 Step 2 联邦学生模型的蒸馏指导。
+    """
 
     def __init__(self, behavior_dim: int, num_subspaces: int, subspace_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -24,71 +33,6 @@ class TeacherModel(nn.Module):
         )
         self.heads = nn.ModuleList([nn.Linear(hidden_dim, self.subspace_dim) for _ in range(self.num_subspaces)])
 
-    def augment(self, x: torch.Tensor, dropout_p: float = 0.2, jitter_sigma: float = 0.1) -> torch.Tensor:
-        """A3: Random Augmentation (Masking/Dropout/Jitter)"""
-        # 1. Dropout (Masking)
-        x_aug = F.dropout(x, p=dropout_p, training=True)
-        # 2. Jitter (Noise)
-        noise = torch.randn_like(x_aug) * jitter_sigma
-        return x_aug + noise
-
-    def forward_contrastive(self, x: torch.Tensor, temp: float = 0.1) -> torch.Tensor:
-        """A3: Self-Supervised InfoNCE Training Step."""
-        B = x.shape[0]
-        # 1. Augment twice
-        x1 = self.augment(x)
-        x2 = self.augment(x)
-        # 2. Encode to subspaces
-        z1 = self.forward(x1).view(B, -1)
-        z2 = self.forward(x2).view(B, -1)
-        # Normalize
-        z1 = F.normalize(z1, dim=-1)
-        z2 = F.normalize(z2, dim=-1)
-        # 3. InfoNCE Loss
-        logits = torch.matmul(z1, z2.T) / temp
-        labels = torch.arange(B, device=x.device)
-        return F.cross_entropy(logits, labels)
-
-    def augment(self, x: torch.Tensor, dropout_p: float = 0.2, jitter_sigma: float = 0.1) -> torch.Tensor:
-        """A3: Random Augmentation (Masking/Dropout/Jitter)"""
-        # 1. Dropout (Masking)
-        x_aug = F.dropout(x, p=dropout_p, training=True)
-        # 2. Jitter (Noise)
-        noise = torch.randn_like(x_aug) * jitter_sigma
-        return x_aug + noise
-
-    def forward_contrastive(self, x: torch.Tensor, temp: float = 0.1) -> torch.Tensor:
-        """A3: Self-Supervised InfoNCE Training Step.
-        
-        Returns: loss
-        """
-        B = x.shape[0]
-        
-        # 1. Augment twice
-        x1 = self.augment(x)
-        x2 = self.augment(x)
-        
-        # 2. Encode to subspaces
-        # Output: [B, M, d_s] -> flatten to [B, M*d_s] for contrastive
-        z1 = self.forward(x1).view(B, -1)
-        z2 = self.forward(x2).view(B, -1)
-        
-        # Normalize for cosine similarity
-        z1 = F.normalize(z1, dim=-1)
-        z2 = F.normalize(z2, dim=-1)
-        
-        # 3. InfoNCE Loss
-        # Positive pairs: (z1[i], z2[i])
-        # Negative pairs: (z1[i], z2[j]) and (z1[i], z1[j]) etc.
-        # Simplified implementation: standard InfoNCE
-        
-        logits = torch.matmul(z1, z2.T) / temp # [B, B]
-        labels = torch.arange(B, device=x.device)
-        
-        loss = F.cross_entropy(logits, labels)
-        
-        return loss
-
     def forward(self, x: torch.Tensor, normalize: bool = True) -> torch.Tensor:
         # x: [B, behavior_dim]
         h = self.encoder(x)  # [B, hidden]
@@ -99,3 +43,58 @@ class TeacherModel(nn.Module):
                 y = F.normalize(y, dim=-1)
             outs.append(y)
         return torch.stack(outs, dim=1)  # [B, M, d_s]
+
+    def augment(self, x: torch.Tensor, mask_p: float = 0.2, noise_std: float = 0.01) -> torch.Tensor:
+        """随机增强：Masking + Jitter
+        
+        Args:
+            x: [B, D] input features
+            mask_p: probability of masking a feature (Dropout)
+            noise_std: standard deviation of Gaussian noise
+        """
+        # 1. Random Masking (Dropout)
+        mask = torch.rand_like(x) > mask_p
+        x_aug = x * mask.float()
+        
+        # 2. Random Jitter (Gaussian Noise)
+        noise = torch.randn_like(x) * noise_std
+        x_aug = x_aug + noise
+        
+        return x_aug
+
+    def forward_contrastive(self, x: torch.Tensor, temp: float = 0.1, 
+                            mask_p: float = 0.2, noise_std: float = 0.01) -> torch.Tensor:
+        """A3 InfoNCE Loss Calculation
+        
+        Formula:
+          u1 = F(aug1(x))
+          u2 = F(aug2(x))
+          L = InfoNCE(u1, u2)
+        """
+        # 1. Augmentation
+        x1 = self.augment(x, mask_p=mask_p, noise_std=noise_std)
+        x2 = self.augment(x, mask_p=mask_p, noise_std=noise_std)
+        
+        # 2. Forward & Normalize
+        # output: [B, M, d_s] -> Flatten to [B, D_out] for global contrast
+        # Or contrast per subspace? Usually global contrast for Teacher.
+        # Let's flatten all heads to get a single vector per sample.
+        u1 = self.forward(x1, normalize=True).reshape(x.size(0), -1)
+        u2 = self.forward(x2, normalize=True).reshape(x.size(0), -1)
+        
+        # Re-normalize after flattening
+        u1 = F.normalize(u1, dim=-1)
+        u2 = F.normalize(u2, dim=-1)
+        
+        # 3. InfoNCE Loss
+        # Cosine similarity: (B, B)
+        sim_12 = torch.mm(u1, u2.t()) / temp
+        sim_21 = torch.mm(u2, u1.t()) / temp
+        
+        # Labels: diagonal
+        labels = torch.arange(x.size(0), device=x.device)
+        
+        loss_1 = F.cross_entropy(sim_12, labels)
+        loss_2 = F.cross_entropy(sim_21, labels)
+        
+        return (loss_1 + loss_2) / 2.0

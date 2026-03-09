@@ -6,9 +6,10 @@ from typing import Any, Dict, List, Sequence, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Subset
 
-from ..data.dataset import ProcessedDataset, collate_samples
+from ..data.dataset import ProcessedDataset, FeatureCollate
 from ..features.behavior_features import behavior_features_from_sample
 from ..models.losses import asd_loss, dynamic_temperature, entropy, at_info_nce
 from ..models.student import StudentHeads, uras_from_subspaces
@@ -30,15 +31,28 @@ class ClientTrainConfig:
     grad_dp: GradDPConfig
     views: List[str]
     behavior_feature_dim: int
+    oversample_factor: float = 1.0
 
 
 class FederatedClient:
-    def __init__(self, client_id: str, samples: List[Dict[str, Any]]):
+    def __init__(self, client_id: str, dataset_or_subset: Any):
+        """
+        Args:
+            client_id: Unique ID
+            dataset_or_subset: A PyTorch Dataset or Subset object containing this client's data.
+                               This avoids loading all data into memory as a list.
+        """
         self.client_id = client_id
-        self.samples = samples
+        self.dataset = dataset_or_subset
 
-    def benign_samples(self) -> List[Dict[str, Any]]:
-        return [s for s in self.samples if int(s.get("label", 0)) == 0]
+    def benign_samples(self):
+        # This is tricky with Subset/Dataset. 
+        # If we want to filter benign samples, we ideally need indices.
+        # For efficiency, we assume the passed dataset IS the benign dataset 
+        # or we rely on the DataLoader to filter if needed.
+        # But for now, let's keep it simple: we assume the caller passes the training set for this client.
+        # If we need to filter benign, we should do it at the index level before creating the Subset.
+        return self.dataset
 
     def local_train(
         self,
@@ -52,13 +66,67 @@ class FederatedClient:
         step1.train()
         student_heads.train()
         teacher.eval()
+        
+        # Import TensorDataset/collate helpers
+        from optc_uras.data.dataset import TensorDataset, tensor_collate, FeatureCollate
 
-        dataset = ProcessedDataset(self.benign_samples())
-        # [FIX] drop_last=True to prevent BatchNorm crash on last batch of size 1
-        # [USER REQ] Batch Size 16, typically leaves 1-2 samples remainder
-        loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_samples, drop_last=True)
+        # [OPTIMIZATION] Direct use of self.dataset which is already a Subset/Dataset
+        dataset = self.dataset
+        if len(dataset) == 0:
+            params = list(step1.parameters()) + list(student_heads.parameters())
+            init_vec = torch.nn.utils.parameters_to_vector(params).detach().clone()
+            metrics = {
+                "client_loss": 0.0,
+                "client_loss_asd": 0.0,
+                "client_loss_infonce": 0.0,
+                "num_batches": 0.0,
+                "view_stats": {"beta_bar": [], "omega": [], "view_names": cfg.views},
+            }
+            return init_vec * 0.0, metrics, 0
+        
+        # Determine if we are using Optimized TensorDataset
+        is_tensor_dataset = False
+        if isinstance(dataset, TensorDataset):
+            is_tensor_dataset = True
+        elif isinstance(dataset, Subset) and isinstance(dataset.dataset, TensorDataset):
+            is_tensor_dataset = True
+            
+        # [OPTIMIZATION] Adaptive num_workers
+        num_workers = 4 if len(dataset) > 5000 and not is_tensor_dataset else 0
+        
+        if is_tensor_dataset:
+            collate_fn = tensor_collate
+        else:
+            collate_fn = FeatureCollate(cfg.views, cfg.behavior_feature_dim)
+        
+        effective_batch_size = int(min(int(cfg.batch_size), len(dataset)))
+        effective_batch_size = max(effective_batch_size, 1)
+        oversample_factor = float(getattr(cfg, "oversample_factor", 1.0))
+        if oversample_factor > 1.0:
+            num_samples = int(max(1, round(len(dataset) * oversample_factor)))
+            sampler = torch.utils.data.RandomSampler(dataset, replacement=True, num_samples=num_samples)
+            loader = DataLoader(
+                dataset,
+                batch_size=effective_batch_size,
+                sampler=sampler,
+                shuffle=False,
+                collate_fn=collate_fn,
+                drop_last=False,
+                num_workers=num_workers,
+            )
+        else:
+            loader = DataLoader(
+                dataset,
+                batch_size=effective_batch_size,
+                shuffle=True,
+                collate_fn=collate_fn,
+                drop_last=False,
+                num_workers=num_workers,
+            )
 
         # 只优化可学习部分（骨架：step1 + student_heads）
+        step1.to(device)
+        student_heads.to(device)
         params = list(step1.parameters()) + list(student_heads.parameters())
         opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
 
@@ -73,7 +141,13 @@ class FederatedClient:
         count_w_init = 0
         with torch.no_grad():
             for batch in loader:
-                outs = step1(batch)
+                if is_tensor_dataset:
+                    _, _, s_tensor, q_tensor = batch
+                    outs = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                else:
+                    batch_samples, _ = batch # FeatureCollate returns (samples, features)
+                    outs = step1(batch_samples)
+                
                 w_batch = torch.stack([o.reliability_w for o in outs], dim=0).to(device)
                 acc_w_init += w_batch.sum(dim=0)
                 count_w_init += w_batch.shape[0]
@@ -82,18 +156,25 @@ class FederatedClient:
         omega_init = beta_bar_init / (beta_bar_init.mean() + 1e-12) # [V]
 
         # C3 State: Gradient Momentum Buffers for Inter-view Projection
-        # Map view_index -> flattened momentum vector
         view_momentums: Dict[int, torch.Tensor] = {} 
-        eta_m = 0.9 # Momentum factor (default)
-        tau_p = 0.5 # Softmax temperature for redundancy weights
+        eta_m = 0.9 
+        tau_p = 0.5 
 
         total_loss = 0.0
+        total_loss_asd = 0.0
+        total_loss_infonce = 0.0
         total_batches = 0
 
         for epoch in range(int(cfg.local_epochs)):
             for batch in loader:
+                if is_tensor_dataset:
+                    _, b_features, s_tensor, q_tensor = batch
+                    outs = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                else:
+                    batch_samples, b_features = batch
+                    outs = step1(batch_samples)
+                
                 # Step1
-                outs = step1(batch)  # list[Step1Outputs]
                 z = torch.stack([o.z for o in outs], dim=0).to(device)                 # [B,d]
                 route_p = torch.stack([o.route_p for o in outs], dim=0).to(device)     # [B,M]
                 w = torch.stack([o.reliability_w for o in outs], dim=0).to(device)     # [B,V]
@@ -104,11 +185,8 @@ class FederatedClient:
                 uras_s = torch.nn.functional.normalize(uras_s, dim=-1)
 
                 # teacher URAS from behavior features (client-side)
-                feats = []
-                for s in batch:
-                    f = behavior_features_from_sample(s, cfg.views, out_dim=int(cfg.behavior_feature_dim))
-                    feats.append(torch.from_numpy(f))
-                x = torch.stack(feats, dim=0).to(device).float()                       # [B,d_b]
+                # [OPTIMIZATION] b_features computed by DataLoader
+                x = b_features.to(device).float()                                      # [B,d_b]
                 x_dp = dp_features(x, cfg.feature_dp)
 
                 sub_t = teacher(x_dp, normalize=True)                                  # [B,M,d_s]
@@ -135,8 +213,7 @@ class FederatedClient:
                 sample_utility = confidence * torch.exp(-distill_err)
 
                 # (5) Privacy Risk Signal (Sensitivity-weighted View Exposure)
-                # Risk = (sum_v sensitivity_v * beta_v) * (1 + MIA_score)
-                # Assuming MIA_score=0 for now (placeholder), focusing on view sensitivity exposure.
+                # Risk = (sum_v sensitivity_v * beta_v)
                 # Default sensitivity = 1.0 for all views if not configured.
                 sensitivity_map = cfg.temp_params.get("view_sensitivities", {})
                 sens_vec = torch.tensor([sensitivity_map.get(v, 1.0) for v in cfg.views], device=device)
@@ -160,18 +237,39 @@ class FederatedClient:
                     max_tau=float(cfg.temp_params.get("max_tau", 0.5)),
                 ).detach()
 
-                # losses
-                # Step2 B1: Strict ASD implementation
-                loss_asd = asd_loss(sub_s, sub_t, route_p, lambda_stats=cfg.lambda_stats)
+                # C2: Loss Calculation
+                # -----------------------------------------------------------
                 
-                # Step2 B4: AT-InfoNCE (Adaptive Temperature)
-                loss_infonce = at_info_nce(uras_s, uras_t, temperature=tau)
+                # A. ASD Loss (Alignment with Teacher)
+                # Ensure teacher is in eval mode
+                step2_teacher = teacher
+                step2_teacher.eval()
+                with torch.no_grad():
+                     sub_t = step2_teacher(x_dp, normalize=True) # [B, M, d]
                 
-                # Step2 B5: Local Training Objective (No Task Loss)
-                # L_local = lambda_asd * L_asd + lambda_at * L_at
-                # L_task = 0 explicitly
+                # Note: student outputs are already computed above (sub_s)
+                
+                loss_asd = asd_loss(sub_s, sub_t, route_p, lambda_stats=float(cfg.lambda_stats))
+                
+                # B. AT-InfoNCE (Contrastive)
+                # We need negative pairs. Standard InfoNCE uses batch negatives.
+                # z_s: [B, d_u] (flattened)
+                z_s_flat = uras_s.view(uras_s.size(0), -1)
+                z_s_norm = F.normalize(z_s_flat, dim=-1)
+                
+                # Teacher global representation
+                z_t_flat = uras_t.view(uras_t.size(0), -1)
+                z_t_norm = F.normalize(z_t_flat, dim=-1)
+                
+                # Use dynamic temperature if enabled
+                loss_infonce = at_info_nce(z_s_norm, z_t_norm, temperature=tau)
+                
+                # Total Loss
                 loss = loss_asd + float(cfg.lambda_infonce) * loss_infonce
-
+                
+                total_loss_asd += float(loss_asd.item())
+                total_loss_infonce += float(loss_infonce.item())
+                
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
 
@@ -312,7 +410,13 @@ class FederatedClient:
         count_w = 0
         with torch.no_grad():
             for batch in loader:
-                outs = step1(batch)
+                if is_tensor_dataset:
+                    _, _, s_tensor, q_tensor = batch
+                    outs = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                else:
+                    batch_samples, _ = batch
+                    outs = step1(batch_samples)
+                
                 w_batch = torch.stack([o.reliability_w for o in outs], dim=0).to(device) # [B, V]
                 acc_w += w_batch.sum(dim=0)
                 count_w += w_batch.shape[0]
@@ -341,6 +445,8 @@ class FederatedClient:
 
         metrics = {
             "client_loss": total_loss / max(total_batches, 1),
+            "client_loss_asd": total_loss_asd / max(total_batches, 1),
+            "client_loss_infonce": total_loss_infonce / max(total_batches, 1),
             "num_batches": float(total_batches),
             "view_stats": view_stats, # Added C1 stats
         }

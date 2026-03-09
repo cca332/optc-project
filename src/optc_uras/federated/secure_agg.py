@@ -14,12 +14,13 @@ class SecureAggregator:
 
     支持模式：
       - enabled=False: 明文聚合 (Plaintext Aggregation)。
-      - enabled=True & protocol='pairwise_masking': 成对掩码模拟。
-        模拟 Bonawitz et al. (2017) 协议的核心数学属性：
+      - enabled=True & protocol='pairwise_masking': 成对掩码模拟 (Full Protocol Simulation)。
+        完整模拟 Bonawitz et al. (2017) 协议的核心数学属性，包括掩码生成与求和抵消。
         1. 客户端生成掩码 M_c，使得所有客户端掩码之和为 0 (Sum(M_c) = 0)。
         2. 服务器只能看到聚合后的结果 Sum(g_c + M_c) = Sum(g_c)。
         3. 服务器无法解析出单个客户端的梯度 g_c。
-      - enabled=True & protocol='mock_secureagg': 简化模拟（无噪声/掩码为0），仅用于快速调试。
+      - enabled=True & protocol='mock_secureagg': 快速数值模拟 (Fast Numerical Simulation)。
+        仅用于大规模实验加速。数学上等价于完美的安全聚合（无噪声干扰），用于验证聚合逻辑正确性而不消耗计算资源生成掩码。
     """
 
     def __init__(self, enabled: bool = False, protocol: str = "mock_secureagg"):

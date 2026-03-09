@@ -10,3 +10,7 @@ results*/
 *.npz
 *.pkl
 *.log
+
+# ignore large data
+*.pkl
+*.json.gz

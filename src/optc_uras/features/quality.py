@@ -6,15 +6,43 @@ import numpy as np
 
 
 def validity(events: Sequence[Dict[str, Any]]) -> float:
-    """OpTC data is pre-cleaned JSONL, so validity is considered 1.0."""
-    return 1.0
+    """Calculate Validity: Proportion of events with valid parsing flag.
+    
+    Logic:
+    - Checks for explicit 'parsing_error' or 'valid' flags in raw logs.
+    - Fallback: Checks if 'type' field is non-empty.
+    - Returns 1.0 if list is empty (neutral).
+    """
+    if not events:
+        return 1.0
+    
+    # Check for explicit 'parsing_success' or 'valid' flag
+    # If not present, check if 'type' is not empty/unknown
+    success_count = 0.0
+    for e in events:
+        # Priority 1: Explicit flag (if available in raw data)
+        if e.get("parsing_error") is False or e.get("valid", True):
+            success_count += 1.0
+        # Priority 2: Fallback heuristic (type exists)
+        elif e.get("type"):
+            success_count += 1.0
+            
+    return float(success_count / (len(events) + 1e-9))
 
 
 def completeness(events: Sequence[Dict[str, Any]], key_fields: Sequence[str]) -> float:
+    """Calculate Completeness: Proportion of non-empty key fields.
+    
+    Logic:
+    - Iterates over user-defined `key_fields` (from config).
+    - Supports dot notation for nested fields (e.g., "properties.image_path").
+    - Returns mean completeness across all events and fields.
+    """
     if not events:
         return 1.0
     if not key_fields:
         return 1.0
+        
     vals = []
     for e in events:
         for k in key_fields:
@@ -170,8 +198,6 @@ class QualityWeighter:
             
         raw_w = beta_rel * w_info
         return raw_w / (raw_w.sum() + 1e-8)
-        
-        return final_w
 
     # Deprecated: kept for compatibility if needed, but logic moved to compute_final_weights
     def softmax_weights(self, fused_scores: Sequence[float]) -> np.ndarray:

@@ -7,7 +7,7 @@
 
 import os
 import argparse
-from typing import Set, Tuple, Optional
+from typing import Set, Tuple, Optional, Dict, Any, List, Iterable
 
 import pandas as pd
 import numpy as np
@@ -54,6 +54,41 @@ def _build_ground_truth_utc() -> Set[Tuple[str, str, str]]:
 
 
 GROUND_TRUTH_UTC = _build_ground_truth_utc()
+
+AttackKey = Tuple[str, str, str]
+
+
+def load_ground_truth(path: Optional[str]) -> Set[AttackKey]:
+    if not path:
+        return set(GROUND_TRUTH_UTC)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    import json
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    items = data.get("attack_slots", data)
+    out: Set[AttackKey] = set()
+    for it in items:
+        if isinstance(it, (list, tuple)) and len(it) == 3:
+            out.add((str(it[0]), str(it[1]), str(it[2])))
+        elif isinstance(it, dict):
+            out.add((str(it["date"]), str(it["slot_start"]), str(it["host_id"])))
+    return out
+
+
+def make_attack_folds(keys: Iterable[AttackKey], n_folds: int = 3) -> List[List[AttackKey]]:
+    keys_sorted = sorted(set(keys))
+    if n_folds <= 0:
+        raise ValueError("n_folds must be positive")
+    folds: List[List[AttackKey]] = [[] for _ in range(n_folds)]
+    for i, k in enumerate(keys_sorted):
+        folds[i % n_folds].append(k)
+    return folds
+
+
+def restrict_ground_truth(ground_truth: Set[AttackKey], include: Set[AttackKey]) -> Set[AttackKey]:
+    return set(ground_truth) & set(include)
 
 
 def normalize_host(host: object) -> Optional[str]:
@@ -138,6 +173,35 @@ def build_y_true_y_pred_y_score(
     )
 
 
+def build_y_true_y_score(
+    df: pd.DataFrame,
+    ground_truth: Set[Tuple[str, str, str]],
+    csv_in_edt: bool = False,
+) -> Tuple[np.ndarray, np.ndarray]:
+    y_true_list = []
+    y_score_list = []
+    for _, row in df.iterrows():
+        ts = row.get("timestamp")
+        host = row.get("host")
+        score = float(row.get("anomaly_score", 0.0))
+
+        host_id = normalize_host(host)
+        slot_key = csv_timestamp_to_utc_slot(str(ts), csv_in_edt=csv_in_edt)
+        if slot_key is None:
+            y_true_list.append(0)
+            y_score_list.append(score)
+            continue
+        date, slot_start = slot_key
+        if host_id is not None and (date, slot_start, host_id) in ground_truth:
+            label = 1
+        else:
+            label = 0
+        y_true_list.append(label)
+        y_score_list.append(score)
+
+    return np.array(y_true_list, dtype=np.int32), np.array(y_score_list, dtype=np.float64)
+
+
 def classification_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray) -> dict:
     out = {
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
@@ -162,34 +226,19 @@ def classification_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.n
     return out
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Evaluate detection_results.csv with ground truth.")
-    parser.add_argument(
-        "csv_path",
-        nargs="?",
-        default="detection_results.csv",
-        help="Path to detection_results.csv (default: detection_results.csv)",
-    )
-    parser.add_argument(
-        "--csv-edt",
-        action="store_true",
-        help="CSV 时间为 EDT（东部时间）时加上此参数，脚本会把 CSV 转为 UTC 再与真实标签对齐",
-    )
-    args = parser.parse_args()
-
-    csv_path = args.csv_path
+def run_evaluation(csv_path: str, csv_in_edt: bool = False) -> Dict[str, Any]:
+    """Programmatic entry point for evaluation."""
     if not os.path.isfile(csv_path):
         print(f"Error: File not found: {csv_path}")
-        return
+        return {}
 
     df = pd.read_csv(csv_path)
     required = ["timestamp", "host", "anomaly_score", "is_anomaly"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         print(f"Error: CSV missing columns: {missing}")
-        return
+        return {}
 
-    csv_in_edt = args.csv_edt
     y_true, y_pred, y_score = build_y_true_y_pred_y_score(df, GROUND_TRUTH_UTC, csv_in_edt=csv_in_edt)
 
     n_pos = int(y_true.sum())
@@ -213,6 +262,38 @@ def main():
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
     print(f"\n指标已保存: {out_json}")
+    
+    return metrics
+
+
+def run_evaluation_with_ground_truth(csv_path: str, ground_truth: Set[AttackKey], csv_in_edt: bool = False) -> Dict[str, Any]:
+    if not os.path.isfile(csv_path):
+        return {}
+    df = pd.read_csv(csv_path)
+    required = ["timestamp", "host", "anomaly_score", "is_anomaly"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        return {}
+    y_true, y_pred, y_score = build_y_true_y_pred_y_score(df, ground_truth, csv_in_edt=csv_in_edt)
+    return classification_metrics(y_true, y_pred, y_score)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate detection_results.csv with ground truth.")
+    parser.add_argument(
+        "csv_path",
+        nargs="?",
+        default="detection_results.csv",
+        help="Path to detection_results.csv (default: detection_results.csv)",
+    )
+    parser.add_argument(
+        "--csv-edt",
+        action="store_true",
+        help="CSV 时间为 EDT（东部时间）时加上此参数，脚本会把 CSV 转为 UTC 再与真实标签对齐",
+    )
+    args = parser.parse_args()
+
+    run_evaluation(args.csv_path, args.csv_edt)
 
 
 if __name__ == "__main__":

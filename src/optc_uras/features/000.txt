@@ -1,0 +1,12 @@
+behavior_features.py
+把一个窗口样本 Sample（host×15min） 转成 Step2 用的“不可逆行为特征向量”（numpy 向量），
+用于联邦预训练/蒸馏里的 teacher/DP 特征。
+它不做 Step1 的 slot/embedding，而是做一个轻量、统计+哈希的行为摘要。
+
+deterministic_aggregator.py
+把“slot 内变长事件列表”压缩成“固定维度不可逆向量”的确定性聚合器：
+用 type 直方图 + 稳定哈希桶 + 强度统计 (+空槽指示) 来表征该 slot。
+
+random_projection.py
+“无需训练的固定随机投影编码器”，
+把每个 slot 的高维不可逆统计向量压缩成统一维度的 dense embedding，为后续 Step1 的对齐和融合提供输入。

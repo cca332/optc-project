@@ -1,0 +1,17 @@
+config.py
+实现了三件事：
+支持 ${env:VAR,default} 读取环境变量
+加载 YAML 配置并支持 CLI 参数覆盖
+把最终使用的配置保存下来（保证实验可复现）
+
+logging_utils.py
+把一个 Python 字典（payload）保存为格式化的 JSON 文件。
+
+path.py
+为一次训练/实验自动创建一个结构化的运行目录（带时间戳），并预先建好常用子文件夹。
+
+slots.py
+把一个 view（例如 process）的事件列表，按固定时间间隔切成多个时间槽（slots）。
+
+typing.py
+定义数据结构
