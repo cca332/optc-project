@@ -25,7 +25,7 @@ data:
     #   end: "2019-09-25T15:00:00-04:00"
       
     # Windowing
-    window_minutes: 15
+    window_minutes: 5
     max_events_per_window: 20000
     chunk_size: 100 # Optimized for IO
     
@@ -73,7 +73,7 @@ model:
   quality_softmax_temp: 0.5
   
   # Step 1 Configuration
-  slot_seconds: 60
+  slot_seconds: 30
   num_hash_buckets: 50
   target_dim: 32
   router_hidden_dims: [64]
@@ -81,7 +81,18 @@ model:
   # LoRA Settings (for Router/Fusion)
   gate_gamma: 0.5
   gate_beta: 5.0
+  interaction_enabled: true
+  quality_injection_lambda: 0.5
+  semantic_dim: 128
+  stat_proj_dim: 32
   max_vocab_types: 500
+  vocab_sizes:
+    type: 50
+    op: 100
+    fine: 100
+    obj_hash: 20000
+    text_hash: 50000
+    num_fields: 10
   
   # Step 2 & Teacher
   subspace_dim: 16

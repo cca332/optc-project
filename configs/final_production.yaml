@@ -42,6 +42,9 @@ model:
   gate_beta: 5.0
   gate_gamma: 0.5
   interaction_enabled: true
+  quality_injection_lambda: 0.5
+  semantic_dim: 128
+  stat_proj_dim: 32
   grad_dp:
     base_clip_C0: 1.0
     enabled: true
@@ -50,6 +53,13 @@ model:
   lora_alpha: 8
   lora_rank: 4
   max_vocab_types: 500
+  vocab_sizes:
+    type: 50
+    op: 100
+    fine: 100
+    obj_hash: 20000
+    text_hash: 50000
+    num_fields: 10
   num_hash_buckets: 50
   num_subspaces: 4
   quality_softmax_temp: 0.5

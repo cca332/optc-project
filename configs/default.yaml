@@ -91,6 +91,7 @@ step1:
     standardize: train_stats     # train_stats | sliding_window
     softmax_temperature: 0.5
     inject_mode: scale_view_vector
+    injection_lambda: 0.5        # A6.3 Residual Quality Injection Strength
     stability:
       enabled: false
 

@@ -42,6 +42,17 @@ class Step1Config:
     interaction_enabled: bool
     # [A6.3] Quality Injection Strength
     quality_injection_lambda: float = 0.5
+    # [A2] Semantic Feature Config
+    semantic_dim: int = 128
+    stat_proj_dim: int = 32
+    vocab_sizes: Dict[str, int] = None
+
+    def __post_init__(self):
+        if self.vocab_sizes is None:
+            self.vocab_sizes = {
+                "type": 50, "op": 100, "fine": 100, 
+                "obj_hash": 20000, "text_hash": 50000, "num_fields": 10
+            }
 
 
 class Step1Model(nn.Module):
@@ -80,28 +91,24 @@ class Step1Model(nn.Module):
             self.aggregators[v] = ag
             
             # 2. A2: Semantic + Stat Feature Extractor
-            # Note: vocab_sizes should be passed from schema fitting. 
-            # For now we use defaults or infer. Ideally schema should store vocab sizes.
-            # Assuming default large sizes for hashing.
-            vocab_sizes = {
-                "type": 50, "op": 100, "fine": 100, 
-                "obj_hash": 20000, "text_hash": 50000, "num_fields": 10
-            }
+            # Use config-controlled vocab sizes and dimensions
+            vocab_sizes = cfg.vocab_sizes
+            
             # stat_dim comes from aggregator
             self.semantic_extractors[v] = SemanticFeatureExtractor(
                 vocab_sizes=vocab_sizes,
                 stat_dim=ag.output_dim,
-                semantic_dim=128, # d_sem
-                stat_proj_dim=32  # d_stat
+                semantic_dim=cfg.semantic_dim, # d_sem
+                stat_proj_dim=cfg.stat_proj_dim  # d_stat
             )
             
             # 3. A3: Slot Aggregator (Temporal)
-            fusion_dim = 128 + 32 # d_sem + d_stat
+            fusion_dim = cfg.semantic_dim + cfg.stat_proj_dim # d_sem + d_stat
             # Project to target_dim for output
             self.slot_aggregators[v] = nn.Sequential(
                 SlotSemanticAggregator(
-                    semantic_dim=128, 
-                    stat_dim=32, 
+                    semantic_dim=cfg.semantic_dim, 
+                    stat_dim=cfg.stat_proj_dim, 
                     fusion_dim=fusion_dim,
                     num_slots=self.num_slots
                 ),
