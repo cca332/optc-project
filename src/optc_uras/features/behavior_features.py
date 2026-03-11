@@ -78,8 +78,21 @@ def behavior_features_from_sample(
             vec[feats_per_view * i + 3] = 0.0
 
         # hash buckets
+        # [Update 2026-03] Extended fields for Step1A semantic alignment
+        # Include rich semantic fields in hash to distinguish behaviors while maintaining irreversibility
+        rich_fields = ["payload", "command_line", "image_path", "dest_ip", "dest_port", "src_ip", "src_port"]
+        
         for e in evs:
-            key = f"{v}|{e.get('type','')}|{e.get('op','')}|{e.get('obj','')}"
+            # Base key: View | Type | Op | Obj
+            parts = [v, str(e.get('type','')), str(e.get('op','')), str(e.get('obj',''))]
+            
+            # Add rich fields if present to capture fine-grained behavioral diversity
+            for f in rich_fields:
+                if val := e.get(f):
+                    # Truncate very long fields to avoid performance issues in hashing, though unlikely
+                    parts.append(str(val)[:500])
+            
+            key = "|".join(parts)
             b = stable_hash(key) % num_buckets
             vec[base_dim + b] += 1.0
 
