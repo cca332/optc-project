@@ -1,0 +1,567 @@
+[
+  {
+    "timestamp": "2019-09-25T09:04:41.981-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "THREAD",
+    "action": "CREATE",
+    "pid": 340,
+    "ppid": 560,
+    "tid": 5612,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5d31ea1b-3f6b-4b20-801e-e46818633b12",
+    "objectID": "ffe5719b-bfb3-4b52-bae5-de9948b10346",
+    "id": "8333ee9a-d982-48c3-b67c-1890790bdda6",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "src_pid": "340",
+      "src_tid": "5612",
+      "tgt_pid": "340",
+      "tgt_tid": "3076",
+      "start_address": "7ffa8d9da090"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:41.987-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "THREAD",
+    "action": "CREATE",
+    "pid": 340,
+    "ppid": 560,
+    "tid": 1144,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5d31ea1b-3f6b-4b20-801e-e46818633b12",
+    "objectID": "cb768c03-0931-4539-9494-f96a40f98e6a",
+    "id": "e35073f8-4656-4a14-b215-7ce25d18225c",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "src_pid": "340",
+      "src_tid": "1144",
+      "tgt_pid": "340",
+      "tgt_tid": "1528",
+      "start_address": "7ffa8d9da090"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:41.982-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "THREAD",
+    "action": "CREATE",
+    "pid": 340,
+    "ppid": 560,
+    "tid": 5612,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5d31ea1b-3f6b-4b20-801e-e46818633b12",
+    "objectID": "3a4fccec-e123-451c-b2f1-93440617e7ef",
+    "id": "fa067dcd-3147-4cf5-9f4b-757f51bf8be1",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "src_pid": "340",
+      "src_tid": "5612",
+      "tgt_pid": "340",
+      "tgt_tid": "3156",
+      "start_address": "7ffa8d9da090"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.626-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "FILE",
+    "action": "WRITE",
+    "pid": 2044,
+    "ppid": 560,
+    "tid": 3976,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "577902a2-6dcf-4115-aa8c-dddf9ad33034",
+    "objectID": "1c35924a-4fc2-4c86-9414-400cdb5a6279",
+    "id": "9c89b4f7-3f68-4f26-99a5-10784c9e03e9",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\lwabeat\\\\lwabeat.exe",
+      "file_path": "\\Device\\HarddiskVolume1\\ProgramData\\lwa\\.winlogbeat.yml",
+      "size": "5582"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:51.398-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "FILE",
+    "action": "MODIFY",
+    "pid": 4,
+    "ppid": 0,
+    "tid": 3604,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5657bedd-1d04-4843-81cc-1cfabed0924e",
+    "objectID": "79a8f042-8693-413a-a77e-994a64a51a5f",
+    "id": "0825049a-9c0f-46c3-9bed-f6d714126536",
+    "properties": {
+      "image_path": "System",
+      "file_path": "\\Device\\HarddiskVolume1\\lwabeat\\logs\\agent.log"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:49.515-04:00",
+    "hostname": "SysClient0069.systemia.com",
+    "object": "FLOW",
+    "action": "START",
+    "pid": 2180,
+    "ppid": 2068,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "24ca2ce8-a79e-41e0-962a-0bc900958eb8",
+    "objectID": "e6ce56f2-30b1-4b2e-8f96-e6f6b19f851f",
+    "id": "9eb2f432-974f-4f9b-8de5-313ddf6ccc75",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Python27\\python.exe",
+      "src_ip": "10.20.2.66",
+      "src_port": "5010",
+      "dest_ip": "225.0.0.1",
+      "dest_port": "5000",
+      "l4protocol": "17",
+      "direction": "inbound"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.706-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "PROCESS",
+    "action": "OPEN",
+    "pid": 772,
+    "ppid": 560,
+    "tid": 792,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "6b42108d-a6a5-4a9c-be41-04fa94d2718b",
+    "objectID": "247806e4-1ab2-4d12-9113-16ac5b272be8",
+    "id": "8f98936c-436f-4327-97bb-27b6300492d2",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "parent_image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "command_line": "\"C:\\Program Files\\WindowsApps\\Microsoft.SkypeApp_11.8.204.0_x64__kzf8qxf38zg5c\\SkypeHost.exe\" -ServerName:SkypeHost.ServerServer"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:49.638-04:00",
+    "hostname": "SysClient0069.systemia.com",
+    "object": "FLOW",
+    "action": "START",
+    "pid": 916,
+    "ppid": 560,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "f90ba6c9-ec1b-479e-8f97-f1042fd63ed4",
+    "objectID": "ecb21fe5-11ea-46c2-8e5c-96345272143c",
+    "id": "83cd73d3-92aa-41a3-9176-041b58661145",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "src_ip": "fe80::312c:56ad:ed46:ab60",
+      "src_port": "59926",
+      "dest_ip": "ff02::1:3",
+      "dest_port": "5355",
+      "l4protocol": "17",
+      "direction": "inbound"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:49.639-04:00",
+    "hostname": "SysClient0069.systemia.com",
+    "object": "FLOW",
+    "action": "START",
+    "pid": 916,
+    "ppid": 560,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "f90ba6c9-ec1b-479e-8f97-f1042fd63ed4",
+    "objectID": "1a27140b-8feb-4b34-a268-b860b2026088",
+    "id": "0efd6959-b947-4302-bf77-bcb07b2d050f",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "src_ip": "10.20.2.99",
+      "src_port": "59926",
+      "dest_ip": "224.0.0.252",
+      "dest_port": "5355",
+      "l4protocol": "17",
+      "direction": "inbound"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:49.215-04:00",
+    "hostname": "SysClient0068.systemia.com",
+    "object": "FLOW",
+    "action": "START",
+    "pid": 860,
+    "ppid": 580,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "f0722530-1eff-4d4d-bf00-304cf1627b50",
+    "objectID": "ef94a406-baf1-4aa5-9d57-a9cb59343c33",
+    "id": "1d82a897-3b38-4789-b29e-825259671670",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "src_ip": "fe80::312c:56ad:ed46:ab60",
+      "src_port": "58181",
+      "dest_ip": "ff02::1:3",
+      "dest_port": "5355",
+      "l4protocol": "17",
+      "direction": "inbound"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:49.519-04:00",
+    "hostname": "SysClient0066.systemia.com",
+    "object": "FLOW",
+    "action": "START",
+    "pid": 2420,
+    "ppid": 1800,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "496a5dc1-cf16-4698-a07a-35b2d573874d",
+    "objectID": "e6ce56f2-30b1-4b2e-8f96-e6f6b19f851f",
+    "id": "9d8d5e89-c03f-4b98-b650-a38719b0f92f",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Python27\\python.exe",
+      "src_ip": "10.20.2.66",
+      "src_port": "5010",
+      "dest_ip": "225.0.0.1",
+      "dest_port": "5000",
+      "l4protocol": "17",
+      "direction": "inbound"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:50.024-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "FILE",
+    "action": "MODIFY",
+    "pid": 4,
+    "ppid": 0,
+    "tid": 80,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5657bedd-1d04-4843-81cc-1cfabed0924e",
+    "objectID": "79a8f042-8693-413a-a77e-994a64a51a5f",
+    "id": "47cee930-5d83-4aa9-88fc-dcd08a8f4e32",
+    "properties": {
+      "image_path": "System",
+      "file_path": "\\Device\\HarddiskVolume1\\lwabeat\\logs\\agent.log"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.625-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "FILE",
+    "action": "WRITE",
+    "pid": 2044,
+    "ppid": 560,
+    "tid": 3976,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "577902a2-6dcf-4115-aa8c-dddf9ad33034",
+    "objectID": "d4008ed6-bc84-47da-a758-49cc7e42b406",
+    "id": "941fb4c5-c6cf-4825-a2fd-63b1fb6b22fc",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\lwabeat\\\\lwabeat.exe",
+      "file_path": "\\Device\\HarddiskVolume1\\$LogFile",
+      "size": "65536"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:45.009-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "FILE",
+    "action": "WRITE",
+    "pid": 2044,
+    "ppid": 560,
+    "tid": 3724,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "577902a2-6dcf-4115-aa8c-dddf9ad33034",
+    "objectID": "79a8f042-8693-413a-a77e-994a64a51a5f",
+    "id": "5c55bc8e-8722-4f93-82e0-8712a60c1a0c",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\lwabeat\\\\lwabeat.exe",
+      "file_path": "\\Device\\HarddiskVolume1\\lwabeat\\logs\\agent.log",
+      "size": "13260"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.706-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "PROCESS",
+    "action": "OPEN",
+    "pid": 772,
+    "ppid": 560,
+    "tid": 792,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "6b42108d-a6a5-4a9c-be41-04fa94d2718b",
+    "objectID": "f9f4863b-0e42-436f-b2e6-18fa19bb74d3",
+    "id": "1c8c83da-9205-43f8-a68f-505fce7a7ccb",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "parent_image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "command_line": "C:\\Windows\\system32\\svchost.exe -k LocalService"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.706-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "PROCESS",
+    "action": "OPEN",
+    "pid": 772,
+    "ppid": 560,
+    "tid": 792,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "6b42108d-a6a5-4a9c-be41-04fa94d2718b",
+    "objectID": "f9f4863b-0e42-436f-b2e6-18fa19bb74d3",
+    "id": "55ad1b36-f78c-4d33-a876-59210abcb273",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "parent_image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "command_line": "C:\\Windows\\system32\\svchost.exe -k LocalService"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.706-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "PROCESS",
+    "action": "OPEN",
+    "pid": 772,
+    "ppid": 560,
+    "tid": 792,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "6b42108d-a6a5-4a9c-be41-04fa94d2718b",
+    "objectID": "44800ea7-a0b1-42b0-a933-27ae010a27b7",
+    "id": "774557aa-66e7-47fb-aa6b-ea720e08ccc2",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "parent_image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "command_line": "\"C:\\Windows\\SystemApps\\Microsoft.Windows.Cortana_cw5n1h2txyewy\\SearchUI.exe\" -ServerName:CortanaUI.AppXa50dqqa5gqv4a428c9y1jjw7m3btvepj.mca"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:48.706-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "PROCESS",
+    "action": "OPEN",
+    "pid": 772,
+    "ppid": 560,
+    "tid": 792,
+    "principal": "NT AUTHORITY\\NETWORK SERVICE",
+    "actorID": "6b42108d-a6a5-4a9c-be41-04fa94d2718b",
+    "objectID": "44800ea7-a0b1-42b0-a933-27ae010a27b7",
+    "id": "75b6d5d2-f650-4931-985a-2b62d5e64817",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "parent_image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "command_line": "\"C:\\Windows\\SystemApps\\Microsoft.Windows.Cortana_cw5n1h2txyewy\\SearchUI.exe\" -ServerName:CortanaUI.AppXa50dqqa5gqv4a428c9y1jjw7m3btvepj.mca"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:00.481-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "REGISTRY",
+    "action": "EDIT",
+    "pid": 340,
+    "ppid": 560,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5d31ea1b-3f6b-4b20-801e-e46818633b12",
+    "objectID": "6c4168c6-a25a-4300-b6fd-7fe5ee61d2c9",
+    "id": "40bf8c25-0c55-4339-8cd9-429f9a9145ac",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "key": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\{12D7C563-B3B8-4289-9B82-BB55188F6146}\\DynamicInfo",
+      "value": "DynamicInfo",
+      "type": "REG_BINARY",
+      "data": "%%1800"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:00.581-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "REGISTRY",
+    "action": "EDIT",
+    "pid": 340,
+    "ppid": 560,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5d31ea1b-3f6b-4b20-801e-e46818633b12",
+    "objectID": "6c4168c6-a25a-4300-b6fd-7fe5ee61d2c9",
+    "id": "18919ba0-805f-4269-9aa4-69e98757e29c",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "key": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\{12D7C563-B3B8-4289-9B82-BB55188F6146}\\DynamicInfo",
+      "value": "DynamicInfo",
+      "type": "REG_BINARY",
+      "data": "%%1800"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:00.191-04:00",
+    "hostname": "SysClient0069.systemia.com",
+    "object": "REGISTRY",
+    "action": "EDIT",
+    "pid": 408,
+    "ppid": 560,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "af94adb1-5870-4a98-bf4d-7152895d1f21",
+    "objectID": "69d5b2c6-aefa-402e-878d-d2db423ab7ef",
+    "id": "863c78bd-d8a9-4983-b2e7-d388d8f5531a",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe",
+      "key": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\{D2D9C298-C381-4455-8141-0E43228E2E5A}\\DynamicInfo",
+      "value": "DynamicInfo",
+      "type": "REG_BINARY",
+      "data": "%%1800"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:00.191-04:00",
+    "hostname": "SysClient0069.systemia.com",
+    "object": "TASK",
+    "action": "START",
+    "pid": 408,
+    "ppid": 560,
+    "tid": 4856,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "af94adb1-5870-4a98-bf4d-7152895d1f21",
+    "objectID": "3896d37b-165f-4e36-bec0-e288cbc87cf9",
+    "id": "0825730e-4ea9-4de4-9e44-d975bb6fcab9",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:00.48-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "TASK",
+    "action": "START",
+    "pid": 340,
+    "ppid": 560,
+    "tid": 520,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5d31ea1b-3f6b-4b20-801e-e46818633b12",
+    "objectID": "8f2d680e-1f26-4f3d-aac3-8600254b62fe",
+    "id": "bc650264-e920-4995-90be-dfc32008d133",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\svchost.exe"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:59.622-04:00",
+    "hostname": "SysClient0066.systemia.com",
+    "object": "MODULE",
+    "action": "LOAD",
+    "pid": 4804,
+    "ppid": 2564,
+    "tid": 1984,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "bc6f2a80-3c53-436d-9fe6-0d5a33bbcc01",
+    "objectID": "611f1324-3106-43ec-888d-70e385bc7f0b",
+    "id": "5217b7e6-093f-4d94-9969-ce6b48e20e9d",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Windows\\system32\\cmd.exe",
+      "module_path": "\\Windows\\SysWOW64\\clbcatq.dll",
+      "base_address": "0x74aa0000"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:59.691-04:00",
+    "hostname": "SysClient0066.systemia.com",
+    "object": "MODULE",
+    "action": "LOAD",
+    "pid": 3620,
+    "ppid": 560,
+    "tid": 644,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "2ca0acf6-57be-4021-8369-483b8b85362a",
+    "objectID": "0778f958-bf16-425a-8038-1bfd3c648adc",
+    "id": "15c93160-1f83-40f8-a0b2-a4e2070243ec",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Program Files (x86)\\Google\\Update\\GoogleUpdate.exe",
+      "module_path": "\\Program Files (x86)\\Google\\Update\\1.3.26.9\\goopdate.dll",
+      "base_address": "0x73ad0000"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:04:59.691-04:00",
+    "hostname": "SysClient0066.systemia.com",
+    "object": "MODULE",
+    "action": "LOAD",
+    "pid": 3620,
+    "ppid": 560,
+    "tid": 644,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "2ca0acf6-57be-4021-8369-483b8b85362a",
+    "objectID": "46ade5ef-1aa3-4403-a1e9-ab48a2b81f23",
+    "id": "5755261f-d7b7-452d-bbcc-c66f23bb0028",
+    "properties": {
+      "image_path": "\\Device\\HarddiskVolume1\\Program Files (x86)\\Google\\Update\\GoogleUpdate.exe",
+      "module_path": "\\Windows\\SysWOW64\\oleaut32.dll",
+      "base_address": "0x73ce0000"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:16.451-04:00",
+    "hostname": "SysClient0069.systemia.com",
+    "object": "SHELL",
+    "action": "COMMAND",
+    "pid": 4152,
+    "ppid": 2288,
+    "tid": 1760,
+    "principal": "SYSTEMIACOM\\Administrator",
+    "actorID": "a80f73dc-5713-4608-8a67-f1e6690e63ff",
+    "objectID": "3c007ff1-8985-4a9f-a9fd-9b605bc326eb",
+    "id": "f0b85f35-b759-4ade-8522-20f58b47ed4a",
+    "properties": {
+      "image_path": "powershell.exe",
+      "payload": "CommandInvocation(Start-Sleep): \"Start-Sleep\"\nParameterBinding(Start-Sleep): name=\"Seconds\"; value=\"30\"",
+      "context_info": "        Severity = Informational\n        Host Name = ConsoleHost\n        Host Version = 5.1.15063.1746\n        Host ID = a46fd73c-9c21-4174-96f3-a0326d67f3a7\n        Host Application = C:\\Windows\\System32\\WindowsPowershe...(truncated,len=243)"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:07.727-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "USER_SESSION",
+    "action": "GRANT",
+    "pid": 4,
+    "ppid": 0,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5657bedd-1d04-4843-81cc-1cfabed0924e",
+    "objectID": "271c95fa-2a2c-426a-9483-4b7452b3c2cf",
+    "id": "c4211925-3c48-4e80-b45c-4968d2cec2aa",
+    "properties": {
+      "image_path": "System"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:05:07.727-04:00",
+    "hostname": "SysClient0075.systemia.com",
+    "object": "USER_SESSION",
+    "action": "REMOTE",
+    "pid": 4,
+    "ppid": 0,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "5657bedd-1d04-4843-81cc-1cfabed0924e",
+    "objectID": "271c95fa-2a2c-426a-9483-4b7452b3c2cf",
+    "id": "255be5e5-b3ef-49d5-b115-d7bbf0309a81",
+    "properties": {
+      "image_path": "System",
+      "src_ip": "::1",
+      "src_port": "0"
+    }
+  },
+  {
+    "timestamp": "2019-09-25T09:17:55.389-04:00",
+    "hostname": "SysClient0059.systemia.com",
+    "object": "HOST",
+    "action": "START",
+    "pid": 4,
+    "ppid": 0,
+    "tid": -1,
+    "principal": "NT AUTHORITY\\SYSTEM",
+    "actorID": "fde33a16-0849-4f57-86ea-1c68588ebbac",
+    "objectID": "fde33a16-0849-4f57-86ea-1c68588ebbac",
+    "id": "0aee7615-53e6-4e7a-a9ae-2cdd6c54a6da",
+    "properties": {
+      "image_path": "System"
+    }
+  }
+]
