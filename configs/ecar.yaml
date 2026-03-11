@@ -1,19 +1,19 @@
 data:
   optc:
     data_dir: "data/raw"  # Raw JSONL files
-    cache_dir: "/root/autodl-tmp/cache_tuning"  # Preprocessed cache (Data Disk)
+    cache_dir: "data/cache"  # Preprocessed cache (Data Disk)
     
     # Dataset Paths & Prefixes
-    # Train: 17-19day (Truncated/Sampled)
-    train_path: "data/raw/train.jsonl"
+    # Train: 3 files (17-19day)
+    train_path: "data/AIA-51-75.ecar-last17-18day.json.gz,data/AIA-51-75.ecar-last 18-19day.json.gz,data/AIA-51-75.ecar-last 19day.json.gz"
     train_prefix: "train"
     
-    # Validation: 20day (Full/Complete)
-    val_path: "data/raw/val.jsonl"
-    val_prefix: "val"
+    # Validation: Use Test Set (25day) for tuning
+    val_path: "data/AIA-51-75.ecar-last25day.json.gz"
+    val_prefix: "test"
     
-    # Test: 25day (Full/Complete)
-    test_path: "data/raw/test.jsonl"
+    # Test: 25day
+    test_path: "data/AIA-51-75.ecar-last25day.json.gz"
     test_prefix: "test"
 
     max_seq_len: 128
@@ -41,23 +41,23 @@ data:
 
 training:
   federated_learning: false # [SWITCH] Toggle between Centralized and Federated
-  epochs: 5 
-  batch_size: 32
+  epochs: 1
+  batch_size: 8
   learning_rate: 1.0e-5 # Step 1 LR (LoRA fine-tuning)
   output_dir: "results4"
   seed: 42
-  num_workers: 4 # [OPTIMIZED] DataLoader workers (set to 0 for debugging)
+  num_workers: 0 # [OPTIMIZED] DataLoader workers (set to 0 for debugging)
   
   # Teacher Pretraining
   teacher:
-    epochs: 5
+    epochs: 1
     lr: 1.0e-5
     temp: 0.1
     
   # Federated Client Training
   client:
-    local_epochs: 5
-    batch_size: 16
+    local_epochs: 1
+    batch_size: 8
     lr: 1.0e-4
     weight_decay: 1.0e-4
     lambda_stats: 50.0
@@ -89,7 +89,7 @@ model:
   
   # Teacher Pretraining (Phase 1)
   teacher:
-    epochs: 5
+    epochs: 1
     lr: 1.0e-4
     temp: 0.1
     augment_mask_p: 0.2
@@ -124,7 +124,7 @@ model:
   
   # DP Settings
   feature_dp:
-    enabled: true
+    enabled: false
     clip_C: 10.0
     noise_sigma: 0.01
     

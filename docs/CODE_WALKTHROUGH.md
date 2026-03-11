@@ -2,14 +2,16 @@
 
 本文档深入解析项目代码结构，帮助开发者理解各个模块的功能及相互联系。
 
+**Update (2026-03)**: 文档已更新以反映 **Step1A 深度语义驱动架构**。
+
 ---
 
 ## 1. 顶层目录结构
 
 ```text
 src/optc_uras/
-├── data/       # 数据层：负责读取、解析和封装数据
-├── features/   # 特征层：负责从原始日志提取统计特征和行为特征
+├── data/       # 数据层：负责读取、解析和语义字段提取
+├── features/   # 特征层：[核心] 负责语义编码、时序聚合与视图摘要
 ├── models/     # 模型层：包含 Step 1, Teacher, Student, Detector 的核心网络定义
 ├── federated/  # 联邦层：实现 Client/Server 交互、差分隐私和安全聚合逻辑
 └── utils/      # 工具层：日志、配置、类型定义
@@ -19,28 +21,38 @@ src/optc_uras/
 
 ## 2. 核心文件详解
 
-### 2.1 数据流起点 (`data/` & `features/`)
+### 2.1 数据与特征层 (`data/` & `features/`)
 
 *   **`data/ecar.py`**: 
-    *   **功能**: 原始 JSONL 读取器。
-    *   **核心类**: `EcarJsonlReader` (流式读取), `WindowAggregator` (时间窗口聚合)。
-*   **`features/deterministic_aggregator.py`**:
-    *   **功能**: 将聚合后的日志转换为数值特征向量。
-    *   **机制**: 使用 Hash Hashing 处理高维字段（如文件名），使用 Vocabulary 处理低维字段（如 Event Type）。
-*   **`features/quality.py`**:
+    *   **功能**: 原始 JSONL 读取与语义预处理。
+    *   **核心逻辑**: 
+        *   `WindowAggregator`: 采用 **5min** 窗口聚合。
+        *   `_make_semantic_obj`: 深度提取 `Payload`, `Command Line`, `IP:Port` 等语义实体，不再截断。
+*   **`features/semantic_encoder.py` (A2)**:
+    *   **功能**: **可学习事件编码器 (Learnable Event Encoder)**。
+    *   **机制**: 将离散事件 (Type, Op, Obj, Text) 映射为稠密向量，替代旧的统计哈希。
+*   **`features/slot_aggregator.py` (A3)**:
+    *   **功能**: **Slot 时序聚合**。
+    *   **机制**: 
+        *   **Attention Pooling**: 聚合 Slot 内的多个事件。
+        *   **Temporal Transformer**: 捕捉 Slot 序列 (30s x 10) 的长程时序依赖。
+*   **`features/view_pooling.py` (A4)**:
+    *   **功能**: **视图级摘要**。
+    *   **机制**: 使用 Masked Attention Pooling 生成视图表示。
+*   **`features/quality.py` (A5/A6)**:
     *   **功能**: 计算视图质量指标（Validity, Completeness, Entropy）。
-    *   **作用**: 为 Step 1 的加权融合提供依据。
+    *   **作用**: 生成可靠性权重 $\beta^{(v)}$，用于 Step 1 的残差注入。
 
 ### 2.2 模型核心 (`models/`)
 
-*   **`models/step1.py` (Fusion)**:
+*   **`models/step1.py` (Semantic Fusion)**:
     *   **核心类**: `Step1Model`。
     *   **逻辑**: 
-        1.  **Feature Extraction**: 调用 Aggregator 提取特征。
-        2.  **Quality Weighting**: 根据质量指标计算视图权重 $w_v$。
-        3.  **Router (LoRA)**: 使用带有 LoRA 适配器的 MLP 将特征映射到潜在空间。
+        1.  **Semantic Feature Extraction**: 调用 A2-A4 模块提取语义特征。
+        2.  **Residual Quality Injection**: 使用公式 $\tilde{s} = (1 + \lambda(w - 1/V)) \bar{s}$ 进行轻量级质量注入。
+        3.  **Router**: 将特征映射到潜在空间。
         4.  **Gated Fusion**: 融合多视图特征生成 $z$。
-    *   **关键点**: `LoRALayer` 的实现允许在冻结 Base 参数的同时进行微调。
+    *   **关键点**: 彻底移除了旧的确定性统计聚合路径，全面转向语义驱动。
 
 *   **`models/teacher.py` (Phase 1)**:
     *   **核心类**: `TeacherModel`。
@@ -60,7 +72,7 @@ src/optc_uras/
 
 *   **`federated/client.py`**:
     *   **功能**: 模拟单个 Client 的行为。
-    *   **流程**: `train_epoch()` -> 计算 Loss -> 更新本地 Student 和 Step 1 (LoRA) -> 添加 DP 噪声 -> 返回更新。
+    *   **流程**: `train_epoch()` -> 计算 Loss -> 更新本地 Student 和 Step 1 -> 添加 DP 噪声 -> 返回更新。
 *   **`federated/server.py`**:
     *   **功能**: 模拟中心服务器。
     *   **流程**: `aggregate()` -> 接收多个 Client 的更新 -> 执行 FedAvg (加权平均) -> 广播新参数。
@@ -81,7 +93,7 @@ src/optc_uras/
 
 2.  **`run_train_student()` (Phase 2)**:
     *   加载 Teacher Checkpoint。
-    *   初始化 `Step1Model` (Feature Fusion) 和 `StudentHeads`。
+    *   初始化 `Step1Model` (Semantic Fusion) 和 `StudentHeads`。
     *   执行联邦学习循环 (FedAvg) 或中心化训练。
     *   保存 `step1_checkpoint.pt` 和 `student_checkpoint.pt`。
 

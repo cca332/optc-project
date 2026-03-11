@@ -35,57 +35,30 @@ class OptcRawReader(RawReader):
         from optc_uras.data.ecar import EcarJsonlReader, WindowAggregator
         import random
         
-        # 1. 初始化流式读取器
-        reader = EcarJsonlReader(
-            self.file_path, 
-            time_range=self.time_range,
-            host_filter=self.host_filter
-        )
-        
-        # 2. 初始化窗口聚合器 (设置较大的 max_events 以避免过早截断)
-        aggregator = WindowAggregator(window_minutes=self.window_minutes, max_events_per_window=100000)
-        
-        # 3. 流式处理并产出样本 (应用同样的采样逻辑)
-        for raw_sample in aggregator.process(reader):
-            # 统计该样本所有 view 的总事件数
-            total_events = sum(len(evs) for evs in raw_sample["views"].values())
-            
-            # 扩充策略
-            if total_events < 10000:
-                num_augmentations = 1
-            elif total_events < 30000:
-                num_augmentations = 3
-            elif total_events < 60000:
-                num_augmentations = 5
+        # Check if file_path is a list (comma separated string or list object)
+        paths = []
+        if isinstance(self.file_path, list):
+            paths = self.file_path
+        elif isinstance(self.file_path, str):
+            if "," in self.file_path:
+                paths = [p.strip() for p in self.file_path.split(",")]
             else:
-                num_augmentations = 10
-                
-            GLOBAL_MAX_EVENTS = 8000
+                paths = [self.file_path]
+        
+        # [ADDED] Shuffle files to ensure randomness if reading multiple files
+        random.shuffle(paths)
+        
+        for p in paths:
+            # 1. 初始化流式读取器
+            reader = EcarJsonlReader(
+                p, 
+                time_range=self.time_range,
+                host_filter=self.host_filter
+            )
             
-            # 1. 先合并
-            all_events = []
-            for v_name, events in raw_sample["views"].items():
-                for evt in events:
-                    all_events.append((v_name, evt))
+            # 2. 初始化窗口聚合器
+            aggregator = WindowAggregator(window_minutes=self.window_minutes, max_events_per_window=None, augment=False)
             
-            for i in range(num_augmentations):
-                aug_sample = {
-                    "host": raw_sample["host"],
-                    "t0": raw_sample["t0"],
-                    "t1": raw_sample.get("t1"),
-                    "label": raw_sample["label"],
-                    "aug_id": i,
-                    "views": {v: [] for v in raw_sample["views"].keys()}
-                }
-                
-                # 2. 全局随机采样
-                if len(all_events) > GLOBAL_MAX_EVENTS:
-                    sampled_pairs = random.sample(all_events, GLOBAL_MAX_EVENTS)
-                else:
-                    sampled_pairs = list(all_events)
-                
-                # 3. 重新分配
-                for v_name, evt in sampled_pairs:
-                    aug_sample["views"][v_name].append(evt)
-                    
-                yield aug_sample
+            # 3. 流式处理并产出样本
+            for raw_sample in aggregator.process(reader):
+                yield raw_sample

@@ -2,7 +2,7 @@
 """
 独立评估脚本：读取 detection_results.csv，与真实攻击标签对齐，计算准确率、召回率、F1、AUC 等指标。
 - 模型输出格式：timestamp, host, anomaly_score, adaptive_threshold, is_anomaly, top_attribution
-- 标准时间以 UTC 为准；真实标签按 UTC 的 15 分钟槽写死。若模型输出的 CSV 是 EDT，需加 --csv-edt，脚本会将其转为 UTC 再对齐。
+- 标准时间以 UTC 为准；真实标签按 UTC 的 5 分钟槽写死。若模型输出的 CSV 是 EDT，需加 --csv-edt，脚本会将其转为 UTC 再对齐。
 """
 
 import os
@@ -24,26 +24,38 @@ from sklearn.metrics import (
 # ---------------------------------------------------------------------------
 # 真实攻击标签（从 Summary 提取，按 UTC 写死）
 # 事件链：Notepad++ 恶意更新 -> meterpreter -> 两台主机 Sysclient0051, Sysclient0351
-# 日志时间(EDT) 已换算为 UTC：UTC = EDT + 4；粒度为 15 分钟槽 (date, slot_start)
+# 日志时间(EDT) 已换算为 UTC：UTC = EDT + 4；粒度为 5 分钟槽 (date, slot_start)
 # ---------------------------------------------------------------------------
 
 # (日期, 槽起始时间, host 标识) 的集合；host 标识为 "0051" 或 "0351"
 def _build_ground_truth_utc() -> Set[Tuple[str, str, str]]:
     # 2019-09-25，日志(EDT) -> UTC: 10:29 EDT -> 14:29 UTC 等
     # Sysclient0051 事件(EDT): 10:29,10:31,...,14:24 -> UTC: 14:29,14:31,...,18:24
-    # 对应 15 分钟槽(UTC 槽起始): 14:15, 14:30, 14:45, 15:00, 17:30, 18:15
-    # Sysclient0351 事件(EDT): 11:23,11:24 -> UTC: 15:23,15:24 -> 槽 15:15
+    # 对应 5 分钟槽(UTC 槽起始):
+    #   14:29 -> 14:25
+    #   14:31, 14:32, 14:33 -> 14:30
+    #   14:36, 14:37, 14:38 -> 14:35
+    #   14:40, 14:44 -> 14:40
+    #   14:48 -> 14:45
+    #   14:53 -> 14:50
+    #   15:07 -> 15:05
+    #   17:42 -> 17:40
+    #   18:24 -> 18:20
+    # Sysclient0351 事件(EDT): 11:23,11:24 -> UTC: 15:23,15:24 -> 槽 15:20
     date = "2019-09-25"
     slots_0051 = [
-        "14:15",  # 14:29
-        "14:30",  # 14:31, 14:32, 14:33
-        "14:45",  # 14:36, 14:37, 14:38, 14:40, 14:44, 14:48, 14:53
-        "15:00",  # 15:07
-        "17:30",  # 17:42
-        "18:15",  # 18:24
+        "14:25",
+        "14:30",
+        "14:35",
+        "14:40",
+        "14:45",
+        "14:50",
+        "15:05",
+        "17:40",
+        "18:20",
     ]
     slots_0351 = [
-        "15:15",  # 15:23, 15:24
+        "15:20",
     ]
     gt = set()
     for slot in slots_0051:
@@ -110,14 +122,16 @@ def csv_timestamp_to_utc_slot(ts_str: str, csv_in_edt: bool = False) -> Optional
     ts_str: 如 '2019-09-25T13:00:00'
     csv_in_edt: 若 True，认为 CSV 为 EDT，会先转为 UTC 再取槽；否则认为 CSV 已是 UTC，不转换。
     返回 (date, slot_start)，解析失败返回 None。
+    
+    [Update]: 对齐粒度已修改为 5min，以兼容更精确的 5min Ground Truth。
     """
     try:
         dt = pd.to_datetime(ts_str)
         if csv_in_edt:
             # EDT -> UTC
             dt = dt + pd.Timedelta(hours=4)
-        # 向下取整到 15 分钟
-        minute = (dt.minute // 15) * 15
+        # 向下取整到 5 分钟
+        minute = (dt.minute // 5) * 5
         slot_dt = dt.replace(minute=minute, second=0, microsecond=0)
         date = slot_dt.strftime("%Y-%m-%d")
         slot_start = slot_dt.strftime("%H:%M")

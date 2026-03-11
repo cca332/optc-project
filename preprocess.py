@@ -249,25 +249,31 @@ def main():
     #     train_path = None
     #     val_path = None
 
-    # [MODIFIED] Skip Train if already processed or to save time
-    # if train_path and os.path.exists(train_path):
-    #     # [MODIFIED] Train uses augmentation + sampling
-    #     logger.info(f"Processing Train Set (Augmented + Sampled): {train_path}")
-    #     
-    #     # Create train config with augmentation enabled
-    #     train_cfg = data_cfg.copy()
-    #     train_cfg["augment"] = True
-    #     
-    #     # [CRITICAL FIX] Disable parallel splitting for ALL datasets.
-    #     # Splitting large files by bytes/lines breaks the integrity of 15-minute time windows.
-    #     # Events for the same window (e.g., 13:00-13:15) get split across different workers,
-    #     # resulting in fragmented, incomplete samples and inflated sample counts (distribution shift).
-    #     # We must process sequentially to ensure correct window aggregation.
-    #     logger.info("Using sequential processing (no split) to maintain window integrity.")
-    #     process_file(train_path, cache_dir, train_prefix, train_cfg)
+    # [MODIFIED] Process Train Set
+    # Handle list of files (comma separated string)
+    train_path_exists = False
+    if train_path:
+        if "," in train_path:
+            # Assume it's a list of files, check if at least one exists or just proceed
+            # Better to check split
+            paths = [p.strip() for p in train_path.split(",")]
+            if any(os.path.exists(p) for p in paths):
+                train_path_exists = True
+        elif os.path.exists(train_path):
+            train_path_exists = True
+
+    if train_path and train_path_exists:
+        logger.info(f"Processing Train Set: {train_path}")
         
-    # elif train_path:
-    #     logger.warning(f"Train path not found: {train_path}")
+        # Create train config (Augmentation disabled in RawReader now, but kept in config for compatibility)
+        train_cfg = data_cfg.copy()
+        # train_cfg["augment"] = True # Disabled in RawReader logic
+        
+        logger.info("Using sequential processing (no split) to maintain window integrity.")
+        process_file(train_path, cache_dir, train_prefix, train_cfg)
+        
+    elif train_path:
+        logger.warning(f"Train path not found or invalid: {train_path}")
 
     # [ADDED] Process Validation (Full/Complete - No Truncation)
     if val_path and os.path.exists(val_path):

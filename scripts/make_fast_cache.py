@@ -117,7 +117,7 @@ def process_indices(indices):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/tuning_25hosts.yaml")
+    parser.add_argument("--config", default="configs/final_production.yaml")
     args = parser.parse_args()
     
     with open(args.config) as f:
@@ -132,6 +132,8 @@ def main():
     # 1. Fit/Load Schema (Main Process)
     print("Preparing Schema...")
     vocab_path = os.path.join(output_dir, "vocab_schema.pt")
+    
+    # [UPDATED] Reverted to 3 Views
     views = ["process", "file", "network"]
     
     temp_dataset = OpTCEcarDataset(cache_dir, split="all", preload=False)
@@ -148,11 +150,13 @@ def main():
         indices = np.arange(min(200, total_samples))
         samples = [temp_dataset[i] for i in indices]
         
-        per_view_schema = {v: AggregatorSchema(event_type_vocab=[], key_fields=["action", "object"]) for v in views}
+        per_view_schema = {v: AggregatorSchema(event_type_vocab=[], key_fields=["type", "op", "obj"]) for v in views}
+        
+        # [UPDATED] Key fields for quality metrics based on new extracted fields (Merged for 3 views)
         key_fields_map = {
-            "process": ["action", "object", "image_path", "command_line"], 
-            "file": ["action", "object", "file_path"], 
-            "network": ["action", "object", "dest_ip", "dest_port"]
+            "process": ["type", "op", "obj", "image_path", "command_line", "module_path", "payload"], 
+            "file": ["type", "op", "obj", "file_path", "key", "value"], 
+            "network": ["type", "op", "obj", "dest_ip", "dest_port"],
         }
         for v, schema in per_view_schema.items():
             if v in key_fields_map: schema.key_fields = key_fields_map[v]
@@ -181,7 +185,7 @@ def main():
     
     s1_cfg = Step1Config(
         views=views, 
-        window_seconds=optc_cfg.get("window_minutes", 15)*60, 
+        window_seconds=optc_cfg.get("window_minutes", 5)*60, 
         slot_seconds=model_cfg.get("slot_seconds", 60),
         include_empty_slot_indicator=True, 
         num_hash_buckets=model_cfg.get("num_hash_buckets", 50), 
@@ -202,7 +206,7 @@ def main():
     )
     
     # 3. Parallel Processing
-    num_workers = 1
+    num_workers = 4 # Use 4 workers
     batch_size = 500 
     all_indices = list(range(total_samples))
     batches = [all_indices[i:i+batch_size] for i in range(0, len(all_indices), batch_size)]

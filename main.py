@@ -298,12 +298,12 @@ def split_train_data(train_dataset, train_cfg):
     all_timed_samples.sort(key=lambda x: x[0])
     sorted_indices = [x[1] for x in all_timed_samples]
     
-    split_idx = len(sorted_indices) // 2
+    split_idx = int(len(sorted_indices) * 0.3333) # 1/3 for Teacher, 2/3 for Student
     teacher_indices = sorted_indices[:split_idx]
     student_indices = sorted_indices[split_idx:]
     
-    print(f"[Split] Teacher: {len(teacher_indices)} samples (First 50%)")
-    print(f"[Split] Student: {len(student_indices)} samples (Last 50%)")
+    print(f"[Split] Teacher: {len(teacher_indices)} samples (First 33.3%)")
+    print(f"[Split] Student: {len(student_indices)} samples (Last 66.7%)")
 
     return Subset(train_dataset, teacher_indices), Subset(train_dataset, student_indices)
 

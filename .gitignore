@@ -1,16 +1,22 @@
-.venv/
-__pycache__/
-*.pyc
-runs/
-/data/
+# directories
+data/
 results*/
+results*
+__pycache__/
+.venv/
+runs/
 .DS_Store
+
+# files
+*.pyc
 *.pt
 *.pth
 *.npz
 *.pkl
 *.log
-
-# ignore large data
-*.pkl
 *.json.gz
+*.egg-info
+*.jsonl
+*.csv
+*demo.json
+smoke_test.py

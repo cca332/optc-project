@@ -2,6 +2,8 @@
 
 本文档旨在帮助用户从零开始配置、运行并评估 **OpTC-URAS** 项目。
 
+**Update (2026-03)**: 指南已更新以反映 **Step1A 深度语义驱动架构** 的配置与操作。
+
 ---
 
 ## 1. 数据集准备与配置
@@ -9,7 +11,7 @@
 本项目支持标准的 OpTC 数据集（JSONL 格式）或 ECAR 格式数据。
 
 ### 1.1 数据路径设置
-在配置文件 `configs/ecar.yaml` 中，`data` 部分定义了明确的训练、验证和测试数据来源：
+在配置文件 `configs/final_production.yaml` 中，`data` 部分定义了明确的训练、验证和测试数据来源：
 
 ```yaml
 data:
@@ -23,80 +25,63 @@ data:
     train_path: "data/raw/train.jsonl"
     train_prefix: "train"
     
-    # 验证集：全量保留 (无截断/采样)，用于模型评估
+    # 验证集与测试集
     val_path: "data/raw/val.jsonl"
     val_prefix: "val"
-    
-    # 测试集：全量保留 (无截断/采样)，用于最终推理
     test_path: "data/raw/test.jsonl"
     test_prefix: "test"
     
-    # 聚合窗口大小（分钟）
-    window_minutes: 15
+    # [Update] 聚合窗口大小（分钟）
+    # 推荐使用 5 分钟窗口，以减少背景噪声对攻击语义的稀释
+    window_minutes: 5
 ```
 
 ### 1.2 数据预处理逻辑 (Preprocessing Logic)
 `preprocess.py` 脚本会根据配置文件中的定义，对不同数据集采取不同的处理策略：
 
-1.  **Training Set (训练集)**: 
-    *   **处理策略**: **增强与采样 (Augmentation & Sampling)**。
-    *   **逻辑**: 先收集窗口内的所有事件，若超过 `max_events`，则基于总事件量进行增强（1x/3x/5x/10x），并在增强后进行全局随机采样。
-    *   **目的**: 保证训练数据的分布多样性，避免简单截断丢失关键信息。
-2.  **Validation & Test Set (验证与测试集)**:
-    *   **处理策略**: **全量保留 (Full/Infinite)**。
-    *   **逻辑**: 设置 `max_events=None`，不做任何截断或丢弃。
-    *   **目的**: 确保评估和测试的客观性，真实反映模型在完整流量下的表现。
+1.  **全量窗口 (Full Window)**: 
+    *   **策略**: 不再对窗口内的总事件数进行截断 (`max_events=Inf`)。
+    *   **目的**: 确保攻击序列（即使出现在窗口末尾）不会被丢弃。
+2.  **语义提取 (Semantic Extraction)**:
+    *   **策略**: 深度解析原始日志，提取 `Payload`, `Command Line`, `IP:Port`, `Registry Key` 等高价值语义字段，并保留在预处理结果中。
+    *   **目的**: 为 Step 1 的可学习语义编码器提供丰富的上下文。
 
 ---
 
 ## 2. 核心参数配置详解
 
-所有可调参数均在 `configs/ecar.yaml` 中。以下是关键参数的详细解释：
+所有可调参数均在 `configs/final_production.yaml` 中。以下是关键参数的详细解释：
 
-### 2.1 联邦学习与隐私 (FL & Privacy)
+### 2.1 模型架构 (Step 1A Semantic)
 ```yaml
-training:
-  federated_learning: true   # true=开启联邦模拟，false=中心化训练（调试用）
-
 model:
-  feature_dp:
-    enabled: true            # 是否开启特征差分隐私
-    noise_sigma: 0.01        # [关键] 添加到特征上的高斯噪声强度。值越大，隐私越强，但检测精度可能下降。
-    clip_C: 10.0             # 特征向量的裁剪阈值（L2 Norm），防止异常值破坏隐私预算。
+  # [Update] Slot 长度（秒）
+  # 5min 窗口划分为 10 个 30s Slot，用于时序 Transformer 建模
+  slot_seconds: 30
+  
+  # [Update] 残差质量注入强度
+  # 范围 [0.0, 1.0]。控制质量权重对主语义特征的影响程度。
+  # 0.5 是一个平衡点，既利用了质量信息，又防止其过度主导。
+  quality_injection_lambda: 0.5
+    
+  step1:
+    num_subspaces: 4         # URAS 划分的子空间数量。
 ```
 
-### 2.2 模型架构 (Model Architecture)
+### 2.2 联邦学习与隐私 (FL & Privacy)
 ```yaml
-model:
-  step1:
-    lora_rank: 4             # [关键] LoRA 适配器的秩。
-                             # 作用：控制 Step 1 微调的自由度。
-                             # 推荐值：4 或 8。太小会导致欠拟合，太大会导致联邦场景下的灾难性遗忘。
-    num_subspaces: 4         # URAS 划分的子空间数量。
-    
-  teacher:
-    temp: 0.1                # InfoNCE 温度系数。越小，模型对相似度的区分越敏锐。
-    augment_mask_p: 0.2      # 数据增强：随机 Mask 掉 20% 的特征。
-    augment_noise_std: 0.01  # 数据增强：添加 0.01 的高斯噪声。
+training:
+  federated_learning: true   # true=开启联邦模拟
 ```
 
 ### 2.3 异常检测 (Detector)
 ```yaml
 model:
   scd_loss:
-    lambda_d: 1.0            # 风格-内容解耦损失权重
-    lambda_r: 1.0            # 重建损失权重
-    lambda_v: 25.0           # [关键] 异常分数损失权重。控制模型对异常样本的敏感度。
-    
-  atc:
-    alpha_conf: 0.0          # 自适应阈值：置信度权重
-    alpha_unc: 0.0           # 自适应阈值：不确定性权重
-    alpha_risk: 0.0          # 自适应阈值：风险权重
-    
-  view_sensitivities:        # [工程参数] 视图风险权重
-    process: 1.0
-    file: 1.0
-    network: 1.0             # 如果希望对网络攻击更敏感，可将此值调大（如 2.0）。
+    lambda_d: 10.0           # 风格-内容解耦损失权重
+    lambda_r: 10.0           # 重建损失权重
+    lambda_v: 1.0            # 异常分数损失权重
+    gamma: 1.0               # [Update] 修正为 1.0，避免梯度爆炸
 ```
 
 ---
@@ -105,10 +90,10 @@ model:
 项目代码经过重构，支持模块化的分阶段执行。
 
 ### 第一步：预处理 (Preprocessing)
-读取原始日志，生成 `.pkl` 缓存文件。
+读取原始日志，生成语义丰富的切片数据。
 ```bash
-# 自动处理 Train (增强+采样) 和 Val/Test (全量)
-python preprocess.py --config configs/ecar.yaml
+# 读取 configs/final_production.yaml
+python preprocess.py --config configs/final_production.yaml
 ```
 
 ### 第二步：分阶段训练与推理
@@ -116,40 +101,32 @@ python preprocess.py --config configs/ecar.yaml
 
 #### 阶段 1: 教师模型预训练 (Teacher Training)
 ```bash
-python main.py train_teacher --config configs/ecar.yaml
+python main.py train_teacher --config configs/final_production.yaml
 ```
-*   **输入**: Train Set (部分), Val Set
-*   **输出**: `teacher_checkpoint.pt`
 
 #### 阶段 2: 学生模型/联邦学习训练 (Student Training)
 ```bash
-python main.py train_student --config configs/ecar.yaml
+python main.py train_student --config configs/final_production.yaml
 ```
-*   **输入**: Teacher Checkpoint, Train Set, Val Set
-*   **输出**: `step1_checkpoint.pt`, `student_checkpoint.pt`
 
 #### 阶段 3: 检测器训练 (Detector Training)
 ```bash
-python main.py train_detector --config configs/ecar.yaml
+python main.py train_detector --config configs/final_production.yaml
 ```
-*   **输入**: Student Checkpoints, Train Set (用于拟合分布)
-*   **输出**: `detector_checkpoint.pt`, 统计阈值
 
 #### 阶段 4: 测试与推理 (Test/Inference)
 ```bash
-python main.py test --config configs/ecar.yaml
+python main.py test --config configs/final_production.yaml
 ```
-*   **输入**: 所有 Checkpoints, Test Set
-*   **输出**: `detection_results.csv`
 
-> **Note**: 如果您希望像以前一样一键跑通所有流程，可以使用 `all` 模式：
+> **Note**: 一键跑通所有流程：
 > ```bash
-> python main.py all --config configs/ecar.yaml
+> python main.py all --config configs/final_production.yaml
 > ```
 
 ### 第三步：评估 (Evaluation)
 计算 Precision, Recall, F1, AUC 等指标。
 ```bash
-python evaluate.py results4/detection_results.csv
+python evaluate.py experiments/result1/detection_results.csv
 ```
 *输出*：控制台打印指标，并生成 `detection_metrics.json`。
