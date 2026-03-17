@@ -1,0 +1,13 @@
+{
+  "threshold_quantile": 0.99,
+  "threshold_before": 55.84413146972656,
+  "threshold_after": 24.864126205444336,
+  "val_calib_size": 150,
+  "val_eval_size": 150,
+  "val_eval_frac_anomaly_before": 0.0,
+  "val_eval_frac_anomaly_after": 0.1133333370089531,
+  "synth_enabled": true,
+  "synth_mode": "score_noise",
+  "synth_noise_scale": 2.5,
+  "synth_tpr_at_threshold": 0.36666667461395264
+}

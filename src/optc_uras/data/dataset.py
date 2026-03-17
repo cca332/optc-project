@@ -216,38 +216,54 @@ class ProcessedDataset(Dataset):
 
 class TensorDataset(Dataset):
     """
-    Dataset wrapping pre-computed tensors in RAM.
-    Returns: (indices, behavior_features, slot_tensor, quality_tensor)
+    Dataset wrapping pre-computed semantic inputs and stats in RAM.
+    Returns: (indices, behavior, c_type, c_op, c_fine, c_obj, c_text, c_masks, c_times, stat_vecs, quality)
     """
-    def __init__(self, behavior: torch.Tensor, slots: torch.Tensor, quality: torch.Tensor, indices: List[int]):
-        self.behavior = behavior # [N, d_b]
-        self.slots = slots       # [N, K, V, d]
-        self.quality = quality   # [N, V, 3]
-        self.indices = indices   # List of global indices this dataset subset maps to
+    def __init__(self, data_dict: Dict[str, torch.Tensor], indices: List[int]):
+        self.data = data_dict
+        self.indices = indices
+        # Expose sliced tensors as attributes for convenience (used in main.py)
+        # Slicing ensures that sub-indexing (e.g. via Subset) works correctly.
+        self.behavior = data_dict.get("behavior")[indices] if data_dict.get("behavior") is not None else None
+        self.quality = data_dict.get("quality")[indices] if data_dict.get("quality") is not None else None
+        self.c_type = data_dict.get("c_type")[indices] if data_dict.get("c_type") is not None else None
+        self.c_op = data_dict.get("c_op")[indices] if data_dict.get("c_op") is not None else None
+        self.c_fine = data_dict.get("c_fine")[indices] if data_dict.get("c_fine") is not None else None
+        self.c_obj = data_dict.get("c_obj")[indices] if data_dict.get("c_obj") is not None else None
+        self.c_text = data_dict.get("c_text")[indices] if data_dict.get("c_text") is not None else None
+        self.c_masks = data_dict.get("c_masks")[indices] if data_dict.get("c_masks") is not None else None
+        self.c_times = data_dict.get("c_times")[indices] if data_dict.get("c_times") is not None else None
+        self.stat_vecs = data_dict.get("stat_vecs")[indices] if data_dict.get("stat_vecs") is not None else None
         
     def __len__(self):
         return len(self.indices)
         
     def __getitem__(self, idx):
-        # Map local index to global index if needed, or just access by local index
-        # The tensors passed in __init__ should already be sliced to match 'indices' order or be global.
-        # Design choice: TensorDataset holds GLOBAL tensors (shared ref) and LOCAL indices.
-        global_idx = self.indices[idx]
+        # Since attributes are already sliced, we can just index them directly if we wanted,
+        # but to keep it consistent with the 11-tuple return:
         return (
-            global_idx, 
-            self.behavior[global_idx], 
-            self.slots[global_idx], 
-            self.quality[global_idx]
+            self.indices[idx], 
+            self.behavior[idx],
+            self.c_type[idx],
+            self.c_op[idx],
+            self.c_fine[idx],
+            self.c_obj[idx],
+            self.c_text[idx],
+            self.c_masks[idx],
+            self.c_times[idx],
+            self.stat_vecs[idx],
+            self.quality[idx]
         )
 
 def tensor_collate(batch):
-    # batch is list of tuples (idx, b, s, q)
-    # Stack them
-    indices = [b[0] for b in batch]
-    b_tensor = torch.stack([b[1] for b in batch])
-    s_tensor = torch.stack([b[2] for b in batch])
-    q_tensor = torch.stack([b[3] for b in batch])
-    return indices, b_tensor, s_tensor, q_tensor
+    # batch is list of tuples
+    out = []
+    for i in range(len(batch[0])):
+        if isinstance(batch[0][i], int):
+            out.append([b[i] for b in batch])
+        else:
+            out.append(torch.stack([b[i] for b in batch]))
+    return tuple(out)
 
 
 class FeatureCollate:

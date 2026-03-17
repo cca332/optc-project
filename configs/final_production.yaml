@@ -1,25 +1,25 @@
-data:
-  optc:
-    cache_dir: /root/optc-project/experiments/result1/cache
-    chunk_size: 500
-    data_dir: /root/optc-project
-    host_filter: null
-    max_events_per_window: null
-    max_seq_len: 128
-    test_path: /root/optc-project/AIA-51-75.ecar-last25day.json.gz
-    test_prefix: test
-    time_range: null
-    train_path: /root/optc-project/AIA-51-75.ecar-last17-18day.json.gz
-    train_prefix: train
-    val_path: /root/optc-project/AIA-51-75.ecar-last17-18day.json.gz
-    val_prefix: val
-    view_mapping:
-      file:
+data:  # 数据相关配置
+  optc:  # OpTC/ECAR 数据源配置
+    cache_dir: data/cache        # 预处理后的缓存目录（train_part*.pkl / test_part*.pkl 会写到这里）
+    chunk_size: 300              # 每个 pkl 文件里最多包含的样本数（一个样本=一个5min窗口）
+    data_dir: data               # 原始数据根目录（目前主要给脚本参考，不强依赖）
+    host_filter: null            # 主机过滤列表；为 null 时不过滤；可填 ['SysClient0051', 'SysClient0052', ...]
+    max_events_per_window: null  # 每个窗口最大事件数；null 表示不截断（推荐，避免丢攻击尾部）
+    max_seq_len: 128             # Step1 输入的最大序列长度（超长会在特征阶段被截断/采样）
+    test_path: data/test/AIA-51-75.ecar-last.json   # 测试集原始日志路径（json/jsonl/json.gz 都支持）
+    test_prefix: test            # 预处理输出文件前缀（会生成 test_partXXX.pkl）
+    time_range: null             # 限制时间范围，如 {'start': '2019-09-25T00:00:00', 'end': '2019-09-26T00:00:00'}
+    train_path: data/raw/AIA-51-75.ecar-last.json   # 训练集原始日志路径（可与 test_path 相同，后续按时间切）
+    train_prefix: train          # 预处理输出文件前缀（会生成 train_partXXX.pkl）
+    val_path: data/raw/AIA-51-75.ecar-last.json     # 验证集原始日志路径（可与 train_path 相同）
+    val_prefix: val              # 预处理输出文件前缀（会生成 val_partXXX.pkl）
+    view_mapping:                # 日志 object_type 到三大视图的映射
+      file:                      # 文件视图：包含文件和注册表相关事件
       - FILE
       - REGISTRY
-      network:
+      network:                   # 网络视图：FLOW 流量事件
       - FLOW
-      process:
+      process:                   # 进程视图：进程、线程、模块、命令行等
       - PROCESS
       - THREAD
       - MODULE
@@ -27,85 +27,104 @@ data:
       - TASK
       - USER_SESSION
       - HOST
-    window_minutes: 5
-model:
-  atc:
-    alpha_conf: 0.5
-    alpha_risk: 0.5
-    alpha_unc: 0.5
-  behavior_dim: 128
-  drift_lr: 0.01
-  feature_dp:
-    clip_C: 10.0
-    enabled: true
-    noise_sigma: 0.01
-  gate_beta: 5.0
-  gate_gamma: 0.5
-  interaction_enabled: true
-  quality_injection_lambda: 0.5
-  semantic_dim: 128
-  stat_proj_dim: 32
-  grad_dp:
-    base_clip_C0: 1.0
-    enabled: true
-    importance_alpha: 0.5
-    noise_sigma0: 0.05
-  lora_alpha: 8
-  lora_rank: 4
-  max_vocab_types: 500
-  vocab_sizes:
-    type: 50
-    op: 100
-    fine: 100
-    obj_hash: 20000
-    text_hash: 50000
-    num_fields: 10
-  num_hash_buckets: 50
-  num_subspaces: 4
-  quality_softmax_temp: 0.5
-  router_hidden_dims:
+    window_minutes: 5            # 聚合窗口长度（分钟）：一个样本=某 host 在连续 5min 内的所有事件
+
+model:  # 模型结构与训练相关超参数
+  atc:  # 自适应阈值校正 (Adaptive Threshold Correction) 配置
+    alpha_conf: 0.5              # 置信度权重
+    alpha_risk: 0.5              # 风险权重
+    alpha_unc: 0.5               # 不确定性权重
+
+  behavior_dim: 128              # 行为特征向量维度（Teacher/Student 输入维度）
+  drift_lr: 0.01                 # 漂移自适应学习率（在线更新用）
+
+  feature_dp:                    # 特征级差分隐私配置（已关闭）
+    clip_C: 10.0                 # 特征向量 L2 裁剪阈值
+    enabled: false               # 是否启用特征差分隐私（false=不加噪声）
+    noise_sigma: 0.01            # 高斯噪声标准差
+
+  gate_beta: 5.0                 # 视图门控锐度参数 beta（越大越“硬”）
+  gate_gamma: 0.5                # 视图门控平滑/温度参数 gamma
+  interaction_enabled: true      # 是否启用视图交互模块（多视图之间的信息交互）
+  quality_injection_lambda: 0.5  # 质量残差注入强度 λ（0=不用质量，1=质量主导）
+
+  semantic_dim: 128              # 语义编码中间维度（内部语义空间大小）
+  stat_proj_dim: 32              # 统计特征投影维度（质量/统计信息降维）
+
+  grad_dp:                       # 梯度级差分隐私配置（已关闭）
+    base_clip_C0: 1.0            # 梯度 L2 裁剪基准阈值
+    enabled: false               # 是否启用梯度差分隐私
+    importance_alpha: 0.5        # 按重要性调整裁剪阈值的幂指数
+    noise_sigma0: 0.05           # 梯度噪声标准差
+
+  lora_alpha: 8                  # LoRA 模块缩放因子 α（控制增量权重强度）
+  lora_rank: 4                   # LoRA 低秩维度 r（越大表达力越强、参数越多）
+
+  max_vocab_types: 500           # 每类离散 token 的最大词表大小上限（防止爆炸）
+  vocab_sizes:                   # Step1 内部各类离散 token 的词表大小上限
+    type: 50                     # 事件类型 type 的 vocab 大小
+    op: 100                      # 操作类型 op 的 vocab 大小
+    fine: 100                    # 细粒度类型 fine_view 的 vocab 大小
+    obj_hash: 20000              # 对象哈希（行为 key）vocab 大小
+    text_hash: 50000             # 文本哈希（payload/命令行等）vocab 大小
+    num_fields: 10               # 参与哈希的字段种类数
+
+  num_hash_buckets: 50           # Step1 随机映射的哈希桶数量（语义子空间）
+  num_subspaces: 4               # URAS 子空间数量 M（Teacher/Student 输出的子空间数）
+
+  quality_softmax_temp: 0.5      # 质量软最大化温度（越小分布越尖锐）
+  router_hidden_dims:            # Router（路由网络）的隐藏层维度
   - 64
-  scd_loss:
-    gamma: 10.0
-    lambda_d: 10.0
-    lambda_r: 10.0
-    lambda_v: 1.0
-  quantile: 0.90
-  slot_seconds: 30
-  subspace_dim: 16
-  target_dim: 32
-  teacher:
-    augment_mask_p: 0.2
-    augment_noise_std: 0.01
-    epochs: 10
-    lr: 0.0001
-    temp: 0.1
-  threshold_quantile: 0.99
-  view_sensitivities:
-    file: 1.5
-    network: 1.0
-    process: 2.0
-training:
-  batch_size: 128
-  client:
-    batch_size: 256
-    lambda_infonce: 10.0
-    lambda_stats: 50.0
-    local_epochs: 5
-    lr: 0.0005
-    temp_params:
-      a: 2.0
-      b: 1.0
-      max_tau: 0.2
-      min_tau: 0.05
-    weight_decay: 0.0001
-  epochs: 50
-  federated_learning: true
-  learning_rate: 0.001
-  num_workers: 0
-  output_dir: /root/optc-project/experiments/result1
-  seed: 42
-  teacher:
-    epochs: 5
-    lr: 1.0e-05
-    temp: 0.1
+
+  scd_loss:                      # SCD 风格-内容解耦损失配置
+    gamma: 10.0                  # 风格/内容损失权重平衡参数
+    lambda_d: 5.0               # 风格空间距离约束权重
+    lambda_r: 10.0               # 重构/正则项权重
+    lambda_v: 1.0                # 视图相关损失权重
+
+  quantile: 0.90                 # 检测时用于统计分位数的阈值（如风格分布估计）
+  slot_seconds: 30               # Slot 长度（秒）：5min 窗口内再按 30s 切成 10 个 slot
+  subspace_dim: 16               # 每个子空间的维度 d_s
+  target_dim: 32                 # Step1 输出行为表示维度（输入 Student/Detector 的维度）
+
+  teacher:                       # Teacher 模型自监督训练超参数
+    augment_mask_p: 0.2          # 行为特征随机 mask 比例（数据增强 Dropout）
+    augment_noise_std: 0.01      # 行为特征随机高斯噪声标准差
+    epochs: 10                   # Teacher 训练轮数（仅用于独立 teacher 训练脚本）
+    lr: 0.0001                   # Teacher 训练学习率
+    temp: 0.1                    # InfoNCE 温度系数
+
+  threshold_quantile: 0.99      # 最终异常得分阈值分位数（0.99=Top1% 视为异常）
+  view_sensitivities:            # 各视图的隐私敏感度权重（用于风险感知温度调度）
+    file: 1.5                    # 文件视图更敏感（权重大）
+    network: 1.0                 # 网络视图默认敏感度
+    process: 2.0                 # 进程视图最敏感（行为模式信息最多）
+
+training:  # 训练流程相关配置
+  batch_size: 128                # 全局验证/Teacher 等默认 batch size（部分流程会单独指定）
+
+  client:                        # 联邦学习中单个客户端本地训练配置
+    batch_size: 256              # 客户端本地 DataLoader 的 batch size
+    lambda_infonce: 10.0         # 本地 AT-InfoNCE 对比损失权重
+    lambda_stats: 50.0           # 本地 ASD 统计对齐损失权重
+    local_epochs: 5              # 每轮 FL 中，客户端在本地训练的 epoch 数
+    lr: 0.0005                   # 客户端本地学习率
+    temp_params:                 # 自适应温度调度参数（控制 tau 范围和曲线）
+      a: 2.0                     # 风险权重（越大越惩罚高风险样本）
+      b: 1.0                     # 效用权重（越大越偏好高效用样本）
+      max_tau: 0.2               # 最大温度（对比损失最平滑）
+      min_tau: 0.05              # 最小温度（对比损失最尖锐）
+    weight_decay: 0.0001         # 客户端本地 AdamW 权重衰减
+
+  epochs: 50                     # 联邦训练全局轮数（Server 聚合的 round 数）
+  federated_learning: true       # 是否启用联邦学习（true=按 host 划分多个 client）
+  learning_rate: 0.001           # （旧字段）集中式训练的全局学习率，当前主要用在部分辅助代码
+  num_workers: 0                 # DataLoader 的 num_workers（0=不启多进程，兼容性更好）
+  output_dir: experiments/result1  # 所有模型、日志和结果输出目录
+  seed: 42                       # 全局随机种子（保证可复现性）
+
+  teacher:                       # main.py 中 Teacher 训练阶段的参数
+    epochs: 5                    # Teacher 训练轮数（在 main.py 里实际使用）
+    lr: 1.0e-05                  # Teacher 训练学习率（在 main.py 里实际使用）
+    temp: 0.1                    # InfoNCE 温度系数（在 main.py 里实际使用）
+  detector_epochs: 1000      # Detector 训练轮数（在 main.py 里实际使用）

@@ -35,15 +35,17 @@ class ClientTrainConfig:
 
 
 class FederatedClient:
-    def __init__(self, client_id: str, dataset_or_subset: Any):
+    def __init__(self, client_id: str, dataset_or_subset: Any, precomputed_metrics: Dict[str, Any] = None):
         """
         Args:
             client_id: Unique ID
             dataset_or_subset: A PyTorch Dataset or Subset object containing this client's data.
                                This avoids loading all data into memory as a list.
+            precomputed_metrics: Optional dict with 'acc_w_init' and 'count_w_init' from cache.
         """
         self.client_id = client_id
         self.dataset = dataset_or_subset
+        self.precomputed_metrics = precomputed_metrics
 
     def benign_samples(self):
         # This is tricky with Subset/Dataset. 
@@ -134,23 +136,28 @@ class FederatedClient:
         init_vec = torch.nn.utils.parameters_to_vector(params).detach().clone()
 
         # C2 Pre-computation: View Importance (Omega)
-        # We need this for Adaptive Clipping inside the loop.
-        # Estimate omega using initial model state.
-        step1.eval()
-        acc_w_init = torch.zeros(len(cfg.views), device=device)
-        count_w_init = 0
-        with torch.no_grad():
-            for batch in loader:
-                if is_tensor_dataset:
-                    _, _, s_tensor, q_tensor = batch
-                    outs = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
-                else:
-                    batch_samples, _ = batch # FeatureCollate returns (samples, features)
-                    outs = step1(batch_samples)
-                
-                w_batch = torch.stack([o.reliability_w for o in outs], dim=0).to(device)
-                acc_w_init += w_batch.sum(dim=0)
-                count_w_init += w_batch.shape[0]
+        # Use precomputed metrics from cache if available to avoid full scan
+        if self.precomputed_metrics:
+            acc_w_init = self.precomputed_metrics["acc_w_init"].to(device)
+            count_w_init = self.precomputed_metrics["count_w_init"]
+        else:
+            # Estimate omega using initial model state (Scan data).
+            step1.eval()
+            acc_w_init = torch.zeros(len(cfg.views), device=device)
+            count_w_init = 0
+            with torch.no_grad():
+                for batch in loader:
+                    if is_tensor_dataset:
+                        # Unpack 11 fields
+                        _, _, *sem_batch, st_tensor, q_tensor = batch
+                        outs = step1.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
+                    else:
+                        batch_samples, _ = batch 
+                        outs = step1(batch_samples)
+                    
+                    w_batch = torch.stack([o.reliability_w for o in outs], dim=0).to(device)
+                    acc_w_init += w_batch.sum(dim=0)
+                    count_w_init += w_batch.shape[0]
         
         beta_bar_init = acc_w_init / max(count_w_init, 1)
         omega_init = beta_bar_init / (beta_bar_init.mean() + 1e-12) # [V]
@@ -168,8 +175,10 @@ class FederatedClient:
         for epoch in range(int(cfg.local_epochs)):
             for batch in loader:
                 if is_tensor_dataset:
-                    _, b_features, s_tensor, q_tensor = batch
-                    outs = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                    # (gi, behavior, c_type, c_op, c_fine, c_obj, c_text, c_masks, c_times, stat_vecs, quality)
+                    # Note: b_features is needed for teacher model below
+                    _, b_features, *sem_batch, st_tensor, q_tensor = batch
+                    outs = step1.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                 else:
                     batch_samples, b_features = batch
                     outs = step1(batch_samples)
@@ -411,8 +420,9 @@ class FederatedClient:
         with torch.no_grad():
             for batch in loader:
                 if is_tensor_dataset:
-                    _, _, s_tensor, q_tensor = batch
-                    outs = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                    # Unpack 11 fields: idx, behavior, 7x semantic, stat, quality
+                    _, _, *sem_batch, st_tensor, q_tensor = batch
+                    outs = step1.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                 else:
                     batch_samples, _ = batch
                     outs = step1(batch_samples)

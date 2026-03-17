@@ -127,10 +127,17 @@ def load_datasets_optimized(optc_cfg, cache_dir, splits=["train", "val", "test"]
         return None, None
 
     behavior = data["behavior"]
-    slots = data["slots"]
+    # Unpack semantic fields
+    c_type = data["c_type"]
+    c_op = data["c_op"]
+    c_fine = data["c_fine"]
+    c_obj = data["c_obj"]
+    c_text = data["c_text"]
+    c_masks = data["c_masks"]
+    c_times = data["c_times"]
+    stat_vecs = data["stat_vecs"]
     quality = data["quality"]
     metadata = data["metadata"]
-    vocab_schema = data.get("vocab_schema", None)
     
     # Re-create index map to find splits
     ds_all = OpTCEcarDataset(cache_dir, split="all", preload=False)
@@ -170,7 +177,7 @@ def load_datasets_optimized(optc_cfg, cache_dir, splits=["train", "val", "test"]
                 base = train_candidates if train_candidates else pool
                 indices = [i for i in base if int(metadata[i].get("t0", 0)) in t0_train]
                 if indices:
-                    datasets["train"] = TensorDataset(behavior, slots, quality, indices)
+                    datasets["train"] = TensorDataset(data, indices)
                     datasets["train"].metadata_list = metadata
                     datasets["train"].get_metadata = lambda idx, ds=datasets["train"]: ds.metadata_list[ds.indices[idx]]
                     print(f"  - train: {len(indices)} samples (Optimized, time-split)")
@@ -179,7 +186,7 @@ def load_datasets_optimized(optc_cfg, cache_dir, splits=["train", "val", "test"]
                 base = val_candidates if val_candidates else pool
                 indices = [i for i in base if int(metadata[i].get("t0", 0)) in t0_val]
                 if indices:
-                    datasets["val"] = TensorDataset(behavior, slots, quality, indices)
+                    datasets["val"] = TensorDataset(data, indices)
                     datasets["val"].metadata_list = metadata
                     datasets["val"].get_metadata = lambda idx, ds=datasets["val"]: ds.metadata_list[ds.indices[idx]]
                     print(f"  - val: {len(indices)} samples (Optimized, time-split)")
@@ -194,22 +201,19 @@ def load_datasets_optimized(optc_cfg, cache_dir, splits=["train", "val", "test"]
                 indices.append(i)
         
         if indices:
-            datasets[split] = TensorDataset(behavior, slots, quality, indices)
-            # Attach metadata list to dataset instance for FL
+            datasets[split] = TensorDataset(data, indices)
             datasets[split].metadata_list = metadata 
-            # Monkey patch get_metadata
-            # [FIX] Use default arg to capture 'ds' to avoid closure late binding issue
             datasets[split].get_metadata = lambda idx, ds=datasets[split]: ds.metadata_list[ds.indices[idx]]
             print(f"  - {split}: {len(indices)} samples (Optimized)")
             
-    return datasets, vocab_schema
+    return datasets, None, data.get("client_profiles", None)
 
 def load_datasets(optc_cfg, cache_dir, splits=["train", "val", "test"]):
     """Load requested datasets"""
     # Try optimized first
-    datasets, vocab_schema = load_datasets_optimized(optc_cfg, cache_dir, splits)
+    datasets, vocab_schema, client_profiles = load_datasets_optimized(optc_cfg, cache_dir, splits)
     if datasets is not None:
-        return datasets, vocab_schema
+        return datasets, vocab_schema, client_profiles
     # datasets = None # Force standard loading
 
     datasets = {}
@@ -314,7 +318,7 @@ def run_train_teacher(config_path):
     config, optc_cfg, train_cfg, model_cfg, device, output_dir = setup_environment(config_path)
     
     # Load Data
-    datasets, _ = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["train", "val"])
+    datasets, _, _ = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["train", "val"])
     teacher_subset, _ = split_train_data(datasets["train"], train_cfg)
     
     num_workers = train_cfg.get("num_workers", 4)
@@ -434,7 +438,7 @@ def run_train_student(config_path):
     config, optc_cfg, train_cfg, model_cfg, device, output_dir = setup_environment(config_path)
     
     # Load Data
-    datasets, _ = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["train", "val"])
+    datasets, _, client_profiles = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["train", "val"])
     teacher_subset, student_subset = split_train_data(datasets["train"], train_cfg)
     
     # Check if optimized
@@ -575,7 +579,9 @@ def run_train_student(config_path):
             if len(host_indices) > 0: 
                 # Create a Subset for this host
                 client_subset = Subset(base_dataset, host_indices)
-                clients.append(FederatedClient(host, client_subset))
+                # Pass precomputed metrics if available
+                profile = client_profiles.get(host, None) if client_profiles else None
+                clients.append(FederatedClient(host, client_subset, precomputed_metrics=profile))
             
     print(f"[Student] Initialized {len(clients)} clients.")
     
@@ -618,18 +624,27 @@ def run_train_student(config_path):
     batch_size = int(train_cfg.get("batch_size", 128))
     val_loader = DataLoader(datasets["val"], batch_size=batch_size, shuffle=False, collate_fn=collate_fn_feat, num_workers=num_workers)
     
+    # Create single 'worker' model pair to avoid repeated deepcopy
+    global_params = list(step1.parameters()) + list(student.parameters())
+    worker_s1, worker_stu = copy.deepcopy(step1), copy.deepcopy(student)
+    worker_params = list(worker_s1.parameters()) + list(worker_stu.parameters())
+    
     for round_idx in range(server_cfg.rounds):
         print(f"\n--- Round {round_idx+1}/{server_cfg.rounds} ---")
         sampled_clients = server.sample_clients()
         updates, ns, round_metrics = [], [], []
         
+        # Snapshot current global state
+        current_global_vec = torch.nn.utils.parameters_to_vector(global_params).detach().clone()
+        
         for client in sampled_clients:
-            c_s1, c_stu = copy.deepcopy(step1), copy.deepcopy(student)
-            upd, met, n = client.local_train(c_s1, c_stu, teacher, client_train_cfg, device)
-            updates.append(upd); ns.append(n); round_metrics.append(met)
-            del c_s1, c_stu; import gc; gc.collect()
+            # Sync worker model with current global weights
+            torch.nn.utils.vector_to_parameters(current_global_vec, worker_params)
             
-        global_params = list(step1.parameters()) + list(student.parameters())
+            # Local Train (worker_s1 and worker_stu will be updated locally)
+            upd, met, n = client.local_train(worker_s1, worker_stu, teacher, client_train_cfg, device)
+            updates.append(upd); ns.append(n); round_metrics.append(met)
+            
         server.aggregate_and_apply(global_params, updates, ns)
         
         # Validation
@@ -647,8 +662,9 @@ def run_train_student(config_path):
         with torch.no_grad():
             for batch in val_loader:
                 if is_optimized:
-                    _, b_features, s_tensor, q_tensor = batch
-                    s1_out = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                    # Unpack 11 fields
+                    _, b_features, *sem_batch, st_tensor, q_tensor = batch
+                    s1_out = step1.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                 else:
                     batch_samples, _ = batch
                     s1_out = step1(batch_samples)
@@ -730,7 +746,7 @@ def run_train_detector(config_path):
     config, optc_cfg, train_cfg, model_cfg, device, output_dir = setup_environment(config_path)
     
     # Load Data
-    datasets, _ = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["train", "val"])
+    datasets, _, _ = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["train", "val"])
     _, student_subset = split_train_data(datasets["train"], train_cfg)
     
     # Init Models
@@ -830,18 +846,17 @@ def run_train_detector(config_path):
         
     loss_cfg = model_cfg.get("scd_loss", {})
     
-    epochs = int(train_cfg.get("epochs", 50))
-    for epoch in range(epochs): # Reduced epochs for faster tuning
+    epochs = int(train_cfg.get("detector_epochs", 10))
+    for epoch in range(epochs): 
         epoch_loss = 0.0; steps = 0
         for batch in tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}"):
             with torch.no_grad():
                 if is_optimized:
-                    _, _, s_tensor, q_tensor = batch
-                    # Handle DataParallel for custom method
-                    s1_model = step1
-                    if hasattr(step1, "module"):
-                        s1_model = step1.module
-                    s1_out = s1_model.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                    # Unpack 11 fields: idx, behavior, 7x sem, stat, quality
+                    _, _, *sem_batch, st_tensor, q_tensor = batch
+                    # Handle DataParallel
+                    s1_model = step1.module if hasattr(step1, "module") else step1
+                    s1_out = s1_model.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                 else:
                     s1_out = step1(batch)
                     
@@ -885,12 +900,9 @@ def run_train_detector(config_path):
         pbar_stats = tqdm(loader, desc="Stats")
         for batch in pbar_stats:
             if is_optimized:
-                _, _, s_tensor, q_tensor = batch
-                # Handle DataParallel for custom method
-                s1_model = step1
-                if hasattr(step1, "module"):
-                    s1_model = step1.module
-                s1_out = s1_model.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                _, _, *sem_batch, st_tensor, q_tensor = batch
+                s1_model = step1.module if hasattr(step1, "module") else step1
+                s1_out = s1_model.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
             else:
                 s1_out = step1(batch)
                 
@@ -954,9 +966,9 @@ def run_train_detector(config_path):
             with torch.no_grad():
                 for batch in tqdm(loader, desc=desc):
                     if is_optimized:
-                        _, _, s_tensor, q_tensor = batch
+                        _, _, *sem_batch, st_tensor, q_tensor = batch
                         s1_model = step1.module if hasattr(step1, "module") else step1
-                        s1_out = s1_model.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                        s1_out = s1_model.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                     else:
                         s1_out = step1(batch)
                     z = torch.stack([o.z for o in s1_out])
@@ -1052,7 +1064,7 @@ def run_test(config_path):
     config, optc_cfg, train_cfg, model_cfg, device, output_dir = setup_environment(config_path)
     
     # Load Data
-    datasets, vocab_schema_loaded = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["test"])
+    datasets, vocab_schema_loaded, _ = load_datasets(optc_cfg, optc_cfg["cache_dir"], splits=["test"])
     
     # If vocab schema loaded from cache, update feature_extractors to ensure consistent mapping
     if vocab_schema_loaded:
@@ -1155,8 +1167,8 @@ def run_test(config_path):
     with torch.no_grad():
         for batch in tqdm(test_loader):
             if is_optimized:
-                idx, _, s_tensor, q_tensor = batch
-                s1_out = step1.forward_from_cache(s_tensor.to(device), q_tensor.to(device))
+                idx, _, *sem_batch, st_tensor, q_tensor = batch
+                s1_out = step1.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                 # Need metadata for timestamp
                 # datasets["test"] has get_metadata?
                 # idx is tensor of indices.

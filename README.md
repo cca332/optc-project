@@ -77,6 +77,42 @@ optc-project/
 
 ## 🚀 快速开始 (Quick Start)
 
+### 从零开始运行（完整步骤）
+
+数据与路径约定（在 `configs/final_production.yaml` 中已配置）：
+
+| 用途 | 路径 | 说明 |
+|------|------|------|
+| 训练集 | `data/raw/train.jsonl` | 支持 `.json` / `.jsonl` / `.json.gz` |
+| 验证集 | `data/raw/val.jsonl` | 可选；可与训练集同文件，按时间划分 |
+| 测试集 | `data/test/AIA-51-75.ecar-last.json` | 按需修改为你的测试文件路径 |
+| 预处理缓存 | `data/cache/` | 自动生成，无需手动创建 |
+| 输出结果 | `experiments/result1/` | 模型与检测结果 |
+
+若训练集文件名或路径不同，请修改配置文件中的 `data.optc.train_path`（及可选的 `val_path`、`test_path`）。
+
+**按顺序执行：**
+
+```bash
+# 1. 安装依赖（在项目根目录下执行）
+pip install -r requirements.txt
+
+# 2. 数据预处理：将原始日志转为 5min 窗口切片并写入 data/cache/
+python preprocess.py --config configs/final_production.yaml
+
+python scripts/make_fast_cache.py --config configs/final_production.yaml --num_workers 0
+
+# 3. 全流程：Teacher 预训练 → Student 联邦训练 → Detector 训练 → 测试
+python main.py all --config configs/final_production.yaml
+
+# 4. 评估检测结果（可选）
+python evaluate.py experiments/result1/detection_results.csv
+```
+
+如需分阶段运行，可使用：`python main.py train_teacher --config ...`、`train_student`、`train_detector`、`test`。
+
+---
+
 ### 1. 环境准备
 
 ```bash
