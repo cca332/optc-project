@@ -276,7 +276,16 @@ def main():
         logger.warning(f"Train path not found or invalid: {train_path}")
 
     # [ADDED] Process Validation (Full/Complete - No Truncation)
-    if val_path and os.path.exists(val_path):
+    val_path_exists = False
+    if val_path:
+        if "," in val_path:
+            paths = [p.strip() for p in val_path.split(",")]
+            if any(os.path.exists(p) for p in paths):
+                val_path_exists = True
+        elif os.path.exists(val_path):
+            val_path_exists = True
+
+    if val_path and val_path_exists:
         logger.info(f"Processing Validation Set (Full - No Truncation): {val_path}")
         # Create a config copy with infinite max_events
         val_cfg = data_cfg.copy()

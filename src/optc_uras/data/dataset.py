@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import pickle
 import logging
+import gc
 from typing import List, Dict, Any, Optional
 import torch
 from torch.utils.data import Dataset
@@ -45,6 +46,22 @@ class OpTCEcarDataset(Dataset):
         if self.preload:
             self._do_preload()
 
+    def _expected_cache_files(self) -> List[str]:
+        files = sorted([f for f in os.listdir(self.cache_dir) if f.endswith(".pt") or f.endswith(".pkl")])
+        expected = []
+        for f in files:
+            if "index_cache" in f:
+                continue
+            if self.split != "all" and self.split not in f:
+                continue
+            expected.append(os.path.join(self.cache_dir, f))
+        return expected
+
+    def _is_index_cache_stale(self) -> bool:
+        expected_files = set(self._expected_cache_files())
+        cached_files = {entry[0] for entry in self.index_map}
+        return expected_files != cached_files
+
     def _do_preload(self):
         """Load all data from index_map into RAM"""
         unique_files = sorted(list(set([m[0] for m in self.index_map])))
@@ -71,8 +88,11 @@ class OpTCEcarDataset(Dataset):
             try:
                 with open(self.index_cache_file, "rb") as f:
                     self.index_map = pickle.load(f)
-                logger.info(f"Loaded index from cache: {self.index_cache_file} ({len(self.index_map)} samples)")
-                return
+                if not self._is_index_cache_stale():
+                    logger.info(f"Loaded index from cache: {self.index_cache_file} ({len(self.index_map)} samples)")
+                    return
+                logger.info(f"Index cache is stale, rebuilding: {self.index_cache_file}")
+                self.index_map = []
             except Exception as e:
                 logger.warning(f"Failed to load index cache: {e}")
 
@@ -155,8 +175,14 @@ class OpTCEcarDataset(Dataset):
         # Check runtime cache
         if self._last_fpath == fpath and self._last_chunk is not None:
             return self._last_chunk[local_idx]
-            
-        # This is slow (IO every time), but memory safe.
+
+        # Release the previous shard before loading the next one to reduce
+        # peak RAM usage when cache files are large.
+        if self._last_chunk is not None:
+            self._last_chunk = None
+            self._last_fpath = None
+            gc.collect()
+
         if fpath.endswith(".pt"):
             chunk = torch.load(fpath, map_location="cpu")
         else:

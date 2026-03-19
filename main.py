@@ -24,6 +24,7 @@ from optc_uras.models.teacher import TeacherModel
 from optc_uras.federated.client import FederatedClient, ClientTrainConfig
 from optc_uras.federated.server import FederatedServer, ServerConfig
 from optc_uras.utils.typing import Step1Outputs
+from optc_uras.utils.misc import replace_relu, apply_lora, LoRALayer
 import copy
 import collections
 
@@ -34,37 +35,6 @@ def load_config(path: str):
 
 def collate_fn(batch):
     return batch
-
-def replace_relu(module):
-    """Replace ReLU with LeakyReLU to prevent dead neurons"""
-    for name, child in module.named_children():
-        if isinstance(child, torch.nn.ReLU):
-            setattr(module, name, torch.nn.LeakyReLU(negative_slope=0.1, inplace=True))
-        else:
-            replace_relu(child)
-
-class LoRALayer(torch.nn.Module):
-    def __init__(self, original_linear, rank=4, alpha=8):
-        super().__init__()
-        self.original = original_linear
-        self.rank = rank
-        self.scaling = alpha / rank
-        
-        # A: [in, r], B: [r, out]
-        self.lora_A = torch.nn.Parameter(torch.randn(original_linear.in_features, rank) * 0.01)
-        self.lora_B = torch.nn.Parameter(torch.zeros(rank, original_linear.out_features))
-            
-    def forward(self, x):
-        base = self.original(x)
-        lora = (x @ self.lora_A @ self.lora_B) * self.scaling
-        return base + lora
-
-def apply_lora(module, target_names=["Linear"], rank=4, alpha=8):
-    for name, child in module.named_children():
-        if isinstance(child, torch.nn.Linear):
-            setattr(module, name, LoRALayer(child, rank=rank, alpha=alpha))
-        else:
-            apply_lora(child, target_names, rank, alpha)
 
 def setup_environment(config_path: str) -> Tuple[Dict, Dict, Dict, Dict, Any]:
     """Load config and setup common environment (device, seed, dirs)"""
@@ -141,6 +111,13 @@ def load_datasets_optimized(optc_cfg, cache_dir, splits=["train", "val", "test"]
     
     # Re-create index map to find splits
     ds_all = OpTCEcarDataset(cache_dir, split="all", preload=False)
+    if len(metadata) != len(ds_all.index_map):
+        print(
+            f"[Setup] Optimized cache is stale: metadata has {len(metadata)} samples, "
+            f"but current cache index has {len(ds_all.index_map)} samples. "
+            f"Falling back to standard loading."
+        )
+        return None, None, None
     
     auto_time_split = optc_cfg.get("auto_time_split")
     if auto_time_split is None:
@@ -774,29 +751,12 @@ def run_train_detector(config_path):
     )
     
     step1 = Step1Model(s1_cfg, per_view_schema).to(device)
-    # Init projectors/stats
+    # Init projectors
     if is_optimized:
         step1.fit_vocabs_and_init_projectors([], max_types=model_cfg.get("max_vocab_types", 500))
-        # No need to refit quality stats here if we assume consistency or load from saved checkpoint logic later?
-        # Ideally we load quality stats from somewhere or refit.
-        # Let's refit using student_subset quality tensor.
-        print("[Detector] Fitting quality stats from TensorDataset...")
-        if isinstance(student_subset, Subset):
-             ds = student_subset.dataset
-             indices = student_subset.indices
-             q_tensor = ds.quality[indices]
-        else:
-             q_tensor = student_subset.quality
-        q_flat = q_tensor.reshape(-1, 4)
-        metrics = ["validity", "completeness", "entropy", "intensity"]
-        qs = {}
-        for i, k in enumerate(metrics):
-             qs[k] = q_flat[:, i].tolist()
-        step1.quality.fit_standardize_stats(qs)
     else:
         vocab_samples = [student_subset.dataset[i] for i in torch.randperm(len(student_subset))[:min(50, len(student_subset))].tolist()]
         step1.fit_vocabs_and_init_projectors(vocab_samples, max_types=model_cfg.get("max_vocab_types", 500))
-        step1.fit_quality_stats(vocab_samples)
     
     replace_relu(step1.router); replace_relu(step1.fusion)
     apply_lora(step1.router, rank=model_cfg.get("lora_rank", 4), alpha=model_cfg.get("lora_alpha", 8))
@@ -812,9 +772,35 @@ def run_train_detector(config_path):
     if not os.path.exists(s1_ckpt) or not os.path.exists(stu_ckpt):
         print("Error: Student/Step1 checkpoints not found. Run 'train_student' first.")
         return
-    step1.load_state_dict(torch.load(s1_ckpt, map_location=device))
-    student.load_state_dict(torch.load(stu_ckpt, map_location=device))
+    
+    # [FIX] Load weights BEFORE fitting quality stats, otherwise buffers will be overwritten!
+    # Use strict=False to allow loading old checkpoints without quality buffers
+    step1.load_state_dict(torch.load(s1_ckpt, map_location=device), strict=False)
+    student.load_state_dict(torch.load(stu_ckpt, map_location=device), strict=False)
     step1.eval(); student.eval()
+
+    # [FIX] Fit/Refit quality stats using the actual data we use for Detector Training
+    if is_optimized:
+        print("[Detector] Fitting quality stats from TensorDataset...")
+        if isinstance(student_subset, Subset):
+             ds = student_subset.dataset
+             indices = student_subset.indices
+             q_tensor = ds.quality[indices]
+        else:
+             q_tensor = student_subset.quality
+        q_flat = q_tensor.reshape(-1, 4)
+        metrics = ["validity", "completeness", "entropy", "intensity"]
+        qs = {}
+        for i, k in enumerate(metrics):
+             qs[k] = q_flat[:, i].tolist()
+        step1.quality.fit_standardize_stats(qs)
+    else:
+        vocab_samples = [student_subset.dataset[i] for i in torch.randperm(len(student_subset))[:min(50, len(student_subset))].tolist()]
+        step1.fit_quality_stats(vocab_samples)
+    
+    # Save step1 again with updated quality buffers for run_test consistency
+    torch.save(step1.state_dict(), s1_ckpt)
+    print(f"[Detector] Step1 quality buffers updated and saved to {s1_ckpt}")
     
     if torch.cuda.device_count() > 1:
         step1 = torch.nn.DataParallel(step1)
@@ -863,6 +849,7 @@ def run_train_detector(config_path):
             z = torch.stack([o.z for o in s1_out])
             route_p = torch.stack([o.route_p for o in s1_out])
             uras = uras_from_subspaces(student(z), route_p)
+            uras = torch.nn.functional.normalize(uras, dim=-1) # [FIX] Ensure alignment with client.py
             
             # Handle DataParallel for Detector
             model_to_call = detector.module if isinstance(detector, torch.nn.DataParallel) else detector
@@ -884,171 +871,67 @@ def run_train_detector(config_path):
     print(f"[Detector] Saved checkpoint to {output_dir}")
     
     # Post-Process: Stats
-    print("[Detector] Fitting Statistics & Threshold...")
-    # if torch.cuda.device_count() > 1:
-    #     step1 = torch.nn.DataParallel(step1)
-    #     student = torch.nn.DataParallel(student)
-    #     detector = torch.nn.DataParallel(detector)
-        
+    print("[Detector] Fitting Statistics & Robust Threshold...")
     step1.eval(); student.eval(); detector.eval()
     
-    # Unwrap for stats fitting (buffers are in module)
     det_module = detector.module if isinstance(detector, torch.nn.DataParallel) else detector
     
-    all_s = []
+    # 1. Compute Train Stats
+    all_s_train = []
     with torch.no_grad():
-        pbar_stats = tqdm(loader, desc="Stats")
-        for batch in pbar_stats:
+        for batch in tqdm(loader, desc="Train Stats"):
             if is_optimized:
                 _, _, *sem_batch, st_tensor, q_tensor = batch
                 s1_model = step1.module if hasattr(step1, "module") else step1
                 s1_out = s1_model.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
             else:
                 s1_out = step1(batch)
-                
             z = torch.stack([o.z for o in s1_out])
-            route_p = torch.stack([o.route_p for o in s1_out])
-            uras = uras_from_subspaces(student(z), route_p)
-            s, _ = det_module.scd(uras, center_batch=False)
-            all_s.append(s.cpu())
+            u_s = uras_from_subspaces(student(z), torch.stack([o.route_p for o in s1_out]))
+            u_s = torch.nn.functional.normalize(u_s, dim=-1) # [FIX] Ensure alignment with client.py
+            s, _ = det_module.scd(u_s, center_batch=False)
+            all_s_train.append(s.cpu())
             
-    all_s = torch.cat(all_s, dim=0)
-    det_module.style_mu = all_s.mean(dim=0).to(device)
-    det_module.style_var = (all_s.to(device) - det_module.style_mu).var(dim=0, unbiased=False) + 1e-6
+    all_s_train = torch.cat(all_s_train, dim=0)
+    det_module.style_mu = all_s_train.mean(dim=0).to(device)
+    det_module.style_var = (all_s_train.to(device) - det_module.style_mu).var(dim=0, unbiased=False) + 1e-5
     det_module.style_inv_cov = torch.diag(1.0/det_module.style_var)
     
-    scores = det_module._compute_raw_score(all_s.to(device))
-    threshold_q = float(model_cfg.get("threshold_quantile", 0.90))
-    det_module.threshold = torch.quantile(scores, threshold_q)
-    with torch.no_grad():
-        frac_anom = float((scores > det_module.threshold).float().mean().item())
-        qs = [0.5, 0.9, 0.99]
-        q_vals = {q: float(torch.quantile(scores, q).item()) for q in qs}
-        print(f"[Detector] Score stats: min={scores.min().item():.4e} median={q_vals[0.5]:.4e} q0.9={q_vals[0.9]:.4e} q0.99={q_vals[0.99]:.4e} max={scores.max().item():.4e}")
-        print(f"[Detector] Threshold(q={threshold_q:.3f})={det_module.threshold.item():.4e} | train_frac_anomaly={frac_anom:.4f}")
+    train_scores = det_module._compute_raw_score(all_s_train.to(device))
+    threshold_q = float(train_cfg.get("threshold_quantile", 0.99))
+    t_train = torch.quantile(train_scores, threshold_q)
 
-    calibrate_on_val = model_cfg.get("calibrate_threshold_on_val")
-    if calibrate_on_val is None:
-        calibrate_on_val = True
-    calibrate_on_val = bool(calibrate_on_val)
-
-    if calibrate_on_val and "val" in datasets and len(datasets["val"]) > 0:
-        val_ds = datasets["val"]
-
-        val_t0s = []
-        for i in range(len(val_ds)):
-            if hasattr(val_ds, "get_metadata"):
-                meta = val_ds.get_metadata(i)
-                t0 = int(meta.get("t0", 0))
-            else:
-                s = val_ds[i]
-                t0 = int(s.get("t0", 0))
-            val_t0s.append(t0)
-
-        unique_t0 = sorted(set(val_t0s))
-        split_at = max(1, min(len(unique_t0) // 2, max(len(unique_t0) - 1, 1)))
-        t0_calib = set(unique_t0[:split_at])
-        calib_local = [i for i, t0 in enumerate(val_t0s) if t0 in t0_calib]
-        eval_local = [i for i, t0 in enumerate(val_t0s) if t0 not in t0_calib]
-
-        val_calib = Subset(val_ds, calib_local)
-        val_eval = Subset(val_ds, eval_local)
-
-        if is_optimized:
-            val_calib_loader = DataLoader(val_calib, batch_size=batch_size, shuffle=False, collate_fn=tensor_collate, num_workers=num_workers)
-            val_eval_loader = DataLoader(val_eval, batch_size=batch_size, shuffle=False, collate_fn=tensor_collate, num_workers=num_workers)
-        else:
-            val_calib_loader = DataLoader(val_calib, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
-            val_eval_loader = DataLoader(val_eval, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
-
-        def _collect_scores(loader, desc: str) -> torch.Tensor:
-            out_scores = []
-            with torch.no_grad():
-                for batch in tqdm(loader, desc=desc):
-                    if is_optimized:
-                        _, _, *sem_batch, st_tensor, q_tensor = batch
-                        s1_model = step1.module if hasattr(step1, "module") else step1
-                        s1_out = s1_model.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
-                    else:
-                        s1_out = step1(batch)
-                    z = torch.stack([o.z for o in s1_out])
-                    route_p = torch.stack([o.route_p for o in s1_out])
-                    uras = uras_from_subspaces(student(z), route_p)
-                    s, _ = det_module.scd(uras, center_batch=False)
-                    sc = det_module._compute_raw_score(s)
-                    out_scores.append(sc.detach().cpu())
-            return torch.cat(out_scores, dim=0) if out_scores else torch.empty((0,), dtype=torch.float32)
-
-        calib_scores = _collect_scores(val_calib_loader, "ValCalib")
-        eval_scores = _collect_scores(val_eval_loader, "ValEval")
-
-        threshold_before = det_module.threshold.detach().cpu()
-        val_frac_eval_before = float((eval_scores > threshold_before).float().mean().item()) if eval_scores.numel() else 0.0
-
-        val_thr = torch.quantile(calib_scores, threshold_q) if calib_scores.numel() else threshold_before
-        det_module.threshold = val_thr.to(device)
-        val_frac_eval_after = float((eval_scores > val_thr).float().mean().item()) if eval_scores.numel() else 0.0
-
-        print(f"[Detector] Val calibration: calib_N={int(calib_scores.numel())} eval_N={int(eval_scores.numel())} | eval_frac_anomaly(before)={val_frac_eval_before:.4f} threshold={val_thr.item():.4e} eval_frac_anomaly(after)={val_frac_eval_after:.4f}")
-
-        try:
-            import json
-
-            val_metrics_path = os.path.join(output_dir, "detector_val_metrics.json")
-            with open(val_metrics_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "threshold_quantile": float(threshold_q),
-                        "threshold_before": float(threshold_before.item()) if threshold_before.numel() else None,
-                        "threshold_after": float(val_thr.item()) if val_thr.numel() else None,
-                        "val_calib_size": int(calib_scores.numel()),
-                        "val_eval_size": int(eval_scores.numel()),
-                        "val_eval_frac_anomaly_before": float(val_frac_eval_before),
-                        "val_eval_frac_anomaly_after": float(val_frac_eval_after),
-                    },
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
-        except Exception:
-            pass
-
-        synth_enabled = model_cfg.get("synth_anom", {}).get("enabled", True)
-        if synth_enabled and eval_scores.numel():
-            torch.manual_seed(int(model_cfg.get("synth_anom", {}).get("seed", 123)))
-            synth_mode = str(model_cfg.get("synth_anom", {}).get("mode", "score_noise"))
-            noise_scale = float(model_cfg.get("synth_anom", {}).get("noise_scale", 2.5))
-
-            if synth_mode == "score_noise":
-                sigma = eval_scores.std(unbiased=False).clamp_min(1e-6)
-                synth_scores = eval_scores + torch.randn_like(eval_scores) * (noise_scale * sigma)
-            else:
-                sigma = eval_scores.std(unbiased=False).clamp_min(1e-6)
-                synth_scores = eval_scores + torch.randn_like(eval_scores) * (noise_scale * sigma)
-
-            tpr_synth = float((synth_scores > val_thr).float().mean().item())
-            try:
-                import json
-
-                val_metrics_path = os.path.join(output_dir, "detector_val_metrics.json")
-                if os.path.exists(val_metrics_path):
-                    with open(val_metrics_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
+    # 2. Calibration on Validation Set (If available)
+    t_final = t_train
+    if "val" in datasets:
+        val_loader = DataLoader(datasets["val"], batch_size=batch_size, shuffle=False, collate_fn=tensor_collate if is_optimized else collate_fn)
+        all_s_val = []
+        with torch.no_grad():
+            for batch in tqdm(val_loader, desc="Val Calibration"):
+                if is_optimized:
+                    _, _, *sem_batch, st_tensor, q_tensor = batch
+                    s1_model = step1.module if hasattr(step1, "module") else step1
+                    s1_out = s1_model.forward_from_cache(*[t.to(device) for t in sem_batch], st_tensor.to(device), q_tensor.to(device))
                 else:
-                    data = {}
-                data.update(
-                    {
-                        "synth_enabled": True,
-                        "synth_mode": synth_mode,
-                        "synth_noise_scale": noise_scale,
-                        "synth_tpr_at_threshold": tpr_synth,
-                    }
-                )
-                with open(val_metrics_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+                    s1_out = step1(batch)
+                z = torch.stack([o.z for o in s1_out])
+                u_s = uras_from_subspaces(student(z), torch.stack([o.route_p for o in s1_out]))
+                u_s = torch.nn.functional.normalize(u_s, dim=-1) # [FIX] Ensure alignment with client.py
+                s, _ = det_module.scd(u_s, center_batch=False)
+                all_s_val.append(s.cpu())
+        
+        if len(all_s_val) > 0:
+            all_s_val = torch.cat(all_s_val, dim=0)
+            val_scores = det_module._compute_raw_score(all_s_val.to(device))
+            t_val = torch.quantile(val_scores, threshold_q)
+            # Use max(Train, Val) to be robust against drift
+            t_final = torch.max(t_train, t_val)
+            print(f"[Detector] Calibration: T_train={t_train:.4f}, T_val={t_val:.4f} -> Final={t_final:.4f}")
 
+    # 3. Apply Safety Margin (e.g. 10%)
+    margin = float(train_cfg.get("threshold_margin", 1.1))
+    det_module.threshold = t_final * margin
+    print(f"[Detector] Final Robust Threshold (with {margin}x margin): {det_module.threshold.item():.4f}")
     # [FIX] Save checkpoint AFTER fitting statistics so threshold/mu/var are stored!
     if isinstance(detector, torch.nn.DataParallel):
         torch.save(detector.module.state_dict(), os.path.join(output_dir, "detector_checkpoint_retrain.pt"))
@@ -1145,9 +1028,10 @@ def run_test(config_path):
     replace_relu(detector)
     
     # Load Checkpoints
-    step1.load_state_dict(torch.load(os.path.join(output_dir, "step1_checkpoint_no_dp.pt"), map_location=device))
-    student.load_state_dict(torch.load(os.path.join(output_dir, "student_checkpoint_no_dp.pt"), map_location=device))
-    detector.load_state_dict(torch.load(os.path.join(output_dir, "detector_checkpoint_retrain.pt"), map_location=device))
+    # Use strict=False to handle potential buffer mismatches from recent architecture tweaks
+    step1.load_state_dict(torch.load(os.path.join(output_dir, "step1_checkpoint_no_dp.pt"), map_location=device), strict=False)
+    student.load_state_dict(torch.load(os.path.join(output_dir, "student_checkpoint_no_dp.pt"), map_location=device), strict=False)
+    detector.load_state_dict(torch.load(os.path.join(output_dir, "detector_checkpoint_retrain.pt"), map_location=device), strict=False)
     
     if torch.cuda.device_count() > 1:
         step1 = torch.nn.DataParallel(step1)
@@ -1187,6 +1071,7 @@ def run_test(config_path):
             z = torch.stack([o.z for o in s1_out])
             route_p = torch.stack([o.route_p for o in s1_out])
             uras = uras_from_subspaces(student(z), route_p)
+            uras = torch.nn.functional.normalize(uras, dim=-1) # [FIX] Ensure alignment with client.py
             
             w_entropies = torch.tensor([o.intermediates.get("w_entropy", 0.0) for o in s1_out], device=device)
             conf_scores = (1.0 - w_entropies).clamp(0.0, 1.0)

@@ -8,11 +8,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.manifold import TSNE
+from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_fscore_support
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from optc_uras.data.dataset import TensorDataset, tensor_collate
 from optc_uras.models.step1 import Step1Config, Step1Model
@@ -20,27 +22,35 @@ from optc_uras.models.teacher import TeacherModel
 from optc_uras.models.student import StudentHeads, uras_from_subspaces
 from optc_uras.models.detector import AnomalyDetector
 from optc_uras.features.quality import QualityWeightsConfig
+from optc_uras.utils.misc import replace_relu, apply_lora
+from evaluate import GROUND_TRUTH_UTC, normalize_host
 
-class LoRALayer(torch.nn.Module):
-    def __init__(self, original_linear, rank=4, alpha=8):
-        super().__init__()
-        self.original = original_linear
-        self.rank = rank
-        self.scaling = alpha / rank
-        self.lora_A = torch.nn.Parameter(torch.randn(original_linear.in_features, rank) * 0.01)
-        self.lora_B = torch.nn.Parameter(torch.zeros(rank, original_linear.out_features))
-            
-    def forward(self, x):
-        base = self.original(x)
-        lora = (x @ self.lora_A @ self.lora_B) * self.scaling
-        return base + lora
 
-def apply_lora(module, target_names=["Linear"], rank=4, alpha=8):
-    for name, child in module.named_children():
-        if isinstance(child, torch.nn.Linear):
-            setattr(module, name, LoRALayer(child, rank=rank, alpha=alpha))
-        else:
-            apply_lora(child, target_names, rank, alpha)
+def infer_labels_from_metadata(metadata):
+    labels = []
+    for m in metadata:
+        raw_label = m.get("label", None)
+        if raw_label is not None and int(raw_label) > 0:
+            labels.append(int(raw_label))
+            continue
+
+        host_id = normalize_host(m.get("host"))
+        if host_id is None:
+            labels.append(0)
+            continue
+
+        try:
+            dt_utc = pd.to_datetime(int(m.get("t0", 0)), unit="ms")
+            dt_utc = dt_utc.floor("5min")
+            key = (
+                dt_utc.strftime("%Y-%m-%d"),
+                dt_utc.strftime("%H:%M"),
+                host_id,
+            )
+            labels.append(1 if key in GROUND_TRUTH_UTC else 0)
+        except Exception:
+            labels.append(0)
+    return np.array(labels, dtype=np.int64)
 
 def setup_diagnosis(config_path):
     with open(config_path, "r", encoding="utf-8") as f:
@@ -159,6 +169,9 @@ def run_diagnosis(config_path):
     # Sample a mix of data (Normal and Attack if possible)
     metadata = data["metadata"]
     labels = np.array([m.get("label", 0) for m in metadata])
+    if np.sum(labels > 0) == 0:
+        labels = infer_labels_from_metadata(metadata)
+        print(f"[Diagnosis] No positive labels found in cache metadata, inferred {int(labels.sum())} attacks from evaluate.py ground truth.")
     hosts = np.array([m.get("host", "unknown") for m in metadata])
     
     # Take a subset for visualization (e.g., 1000 samples)
@@ -285,6 +298,18 @@ def run_diagnosis(config_path):
     # Generate Report
     avg_normal = np.mean(all_scores[all_labels==0])
     avg_attack = np.mean(all_scores[all_labels>0]) if any(all_labels>0) else "N/A"
+    pred_at_threshold = (all_scores > float(detector.threshold.item())).astype(int)
+
+    auc = "N/A"
+    auprc = "N/A"
+    precision = "N/A"
+    recall = "N/A"
+    f1 = "N/A"
+    if len(np.unique(all_labels)) > 1:
+        auc = f"{roc_auc_score(all_labels, all_scores):.4f}"
+        auprc = f"{average_precision_score(all_labels, all_scores):.4f}"
+        p, r, f, _ = precision_recall_fscore_support(all_labels, pred_at_threshold, average="binary", zero_division=0)
+        precision, recall, f1 = f"{p:.4f}", f"{r:.4f}", f"{f:.4f}"
     
     report = f"""
 Anomaly Detection Diagnosis Report
@@ -301,6 +326,14 @@ Score Statistics:
 - Attack Mean: {avg_attack if isinstance(avg_attack, str) else f"{avg_attack:.4f}"}
 - Max Score: {np.max(all_scores):.4f}
 - Threshold (from model): {detector.threshold.item():.4f}
+
+Detection Metrics:
+- Positive Samples: {int((all_labels > 0).sum())}
+- Precision@Threshold: {precision}
+- Recall@Threshold: {recall}
+- F1@Threshold: {f1}
+- AUC: {auc}
+- AUPRC: {auprc}
     """
     with open(os.path.join(diag_dir, "diagnosis_report.txt"), "w") as f:
         f.write(report)

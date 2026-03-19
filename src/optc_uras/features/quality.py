@@ -97,6 +97,9 @@ def entropy_proxy(events: Sequence[Dict[str, Any]]) -> float:
         
     return float(ent / max_ent)
 
+import torch.nn as nn
+import torch
+
 @dataclass
 class QualityWeightsConfig:
     # A6.1 Reliability Weights (val, com)
@@ -118,24 +121,40 @@ class QualityWeightsConfig:
             self.info_weights = {"entropy": 0.5, "intensity": 0.5}
 
 
-class QualityWeighter:
+class QualityWeighter(nn.Module):
     """A5+A6: Two-layer Quality Fusion (Reliability * Information Gain)."""
 
     def __init__(self, cfg: QualityWeightsConfig):
+        super().__init__()
         self.cfg = cfg
-        self._mu: Dict[str, float] = {}
-        self._sig: Dict[str, float] = {}
+        # Register normalization buffers to ensure they are saved in state_dict
+        # Keys: validity, completeness, entropy, intensity
+        self.register_buffer("_mu", torch.zeros(4))
+        self.register_buffer("_sig", torch.ones(4))
+        self._key_to_idx = {"validity": 0, "completeness": 1, "entropy": 2, "intensity": 3}
 
     def fit_standardize_stats(self, qs: Dict[str, List[float]]) -> None:
+        """
+        Updates the buffers with new stats.
+        """
+        new_mu = self._mu.clone()
+        new_sig = self._sig.clone()
         for k, arr in qs.items():
-            a = np.asarray(arr, dtype=np.float32)
-            self._mu[k] = float(a.mean()) if a.size else 0.0
-            self._sig[k] = float(a.std() + 1e-6) if a.size else 1.0
+            if k in self._key_to_idx:
+                idx = self._key_to_idx[k]
+                a = np.asarray(arr, dtype=np.float32)
+                new_mu[idx] = float(a.mean()) if a.size else 0.0
+                new_sig[idx] = float(a.std() + 1e-6) if a.size else 1.0
+        self._mu.copy_(new_mu)
+        self._sig.copy_(new_sig)
 
     def _z(self, k: str, x: float) -> float:
-        if not self._mu:
+        if k not in self._key_to_idx:
             return float(x)
-        return float((x - self._mu.get(k, 0.0)) / self._sig.get(k, 1.0))
+        idx = self._key_to_idx[k]
+        mu = self._mu[idx].item()
+        sig = self._sig[idx].item()
+        return float((x - mu) / sig)
         
     def _sigmoid(self, x: float) -> float:
         return 1.0 / (1.0 + np.exp(-x))

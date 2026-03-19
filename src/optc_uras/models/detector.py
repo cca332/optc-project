@@ -138,12 +138,14 @@ class AnomalyDetector(nn.Module):
         self.register_buffer("style_inv_cov", torch.eye(style_dim))
         self.register_buffer("threshold", torch.tensor(0.0))
         
-    def fit(self, uras_features: torch.Tensor, epochs: int = 10, lr: float = 1e-3, batch_size: int = 256, 
+    def fit(self, uras_features: torch.Tensor, val_features: Optional[torch.Tensor] = None,
+            epochs: int = 10, lr: float = 1e-3, batch_size: int = 256, 
             use_diagonal: bool = True, quantile: float = 0.99,
             lambda_d: float = 1.0, lambda_r: float = 1.0, lambda_v: float = 1.0, gamma: float = 1.0) -> List[float]:
         """
-        Train SCD projector on benign URAS features and compute statistics.
+        Train SCD projector on benign URAS features and compute robust statistics.
         Args:
+            val_features: Optional validation set to calibrate threshold drift.
             gamma: Variance regularization weight (higher = more decorrelation/anti-collapse).
             lambda_v: Variance loss weight.
         Returns:
@@ -182,7 +184,7 @@ class AnomalyDetector(nn.Module):
             avg_loss = epoch_loss / max(steps, 1)
             loss_history.append(avg_loss)
             
-        # 2. Compute Benign Statistics (for Scoring)
+        # 2. Compute Robust Statistics
         self.eval()
         with torch.no_grad():
             all_s = []
@@ -206,7 +208,7 @@ class AnomalyDetector(nn.Module):
             else:
                 # Full Covariance: Sigma_c = 1/N * S^T S + lambda*I
                 cov = torch.matmul(s_centered.t(), s_centered) / N
-                cov = cov + torch.eye(self.scd.style_dim, device=cov.device) * 1e-6
+                cov = cov + torch.eye(self.scd.style_dim, device=cov.device) * 1e-5
                 # For non-diagonal, we approximate var diagonal for B5 or just store diag part
                 self.style_var = torch.diag(cov) 
                 try:
@@ -216,20 +218,24 @@ class AnomalyDetector(nn.Module):
                     var = s_centered.var(dim=0, unbiased=False) + 1e-6
                     self.style_inv_cov = torch.diag(1.0 / var)
             
-            # 3. Determine Threshold (B2: Quantile-based)
+            # 3. Base Threshold (Train Quantile)
             scores = self._compute_raw_score(all_s)
+            base_threshold = torch.quantile(scores, quantile)
             
+            # 4. Drift Calibration (NEW)
+            if val_features is not None:
+                val_s, _ = self.scd(val_features, center_batch=False)
+                val_scores = self._compute_raw_score(val_s)
+                val_threshold = torch.quantile(val_scores, quantile)
+                # If val is more noisy, take the max to be safe
+                self.threshold = torch.max(base_threshold, val_threshold)
+                print(f"[Detector] Calibrated threshold: Train={base_threshold:.4f}, Val={val_threshold:.4f} -> Final={self.threshold.item():.4f}")
+            else:
+                self.threshold = base_threshold
+                
             # DEBUG: Print score statistics
             print(f"[DEBUG] Benign Scores: Min={scores.min():.4f}, Max={scores.max():.4f}, Mean={scores.mean():.4f}, Std={scores.std():.4f}")
-            print(f"[DEBUG] Quantiles: 50%={torch.quantile(scores, 0.5):.4f}, 90%={torch.quantile(scores, 0.9):.4f}, 99%={torch.quantile(scores, 0.99):.4f}")
-            
-            # Calculate q-th quantile of benign scores
-            # torch.quantile requires float tensor
-            self.threshold = torch.quantile(scores, quantile)
-            
-            # Force threshold to mean + 3*std for more robustness
-            # self.threshold = scores.mean() + 3.0 * scores.std()
-            print(f"[DEBUG] Quantile Threshold ({quantile}): {self.threshold.item():.4f}")
+            print(f"[DEBUG] Final Threshold: {self.threshold.item():.4f}")
             
         return loss_history
 

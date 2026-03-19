@@ -1,16 +1,24 @@
 
 Anomaly Detection Diagnosis Report
 ==================================
-MSE (Teacher vs Student URAS): 0.000977
-Cosine Similarity: 0.968724
+MSE (Teacher vs Student URAS): 0.000999
+Cosine Similarity: 0.968036
 
 Average Standard Deviation (Check for Collapse):
-- Student URAS: 0.061611
-- Style: 17.534380
+- Student URAS: 0.060306
+- Style: 0.025203
 
 Score Statistics:
-- Normal Mean: 90.2388
-- Attack Mean: N/A
-- Max Score: 100.7872
-- Threshold (from model): 25.1670
+- Normal Mean: 214.7018
+- Attack Mean: 224.5763
+- Max Score: 444.3226
+- Threshold (from model): 424.9262
+
+Detection Metrics:
+- Positive Samples: 9
+- Precision@Threshold: 0.0000
+- Recall@Threshold: 0.0000
+- F1@Threshold: 0.0000
+- AUC: 0.5186
+- AUPRC: 0.0096
     

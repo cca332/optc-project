@@ -1,17 +1,19 @@
 data:  # 数据相关配置
   optc:  # OpTC/ECAR 数据源配置
     cache_dir: data/cache        # 预处理后的缓存目录（train_part*.pkl / test_part*.pkl 会写到这里）
-    chunk_size: 300              # 每个 pkl 文件里最多包含的样本数（一个样本=一个5min窗口）
+    chunk_size: 150               # 降低预处理分块大小，避免多大文件联合预处理时写缓存触发 MemoryError
     data_dir: data               # 原始数据根目录（目前主要给脚本参考，不强依赖）
     host_filter: null            # 主机过滤列表；为 null 时不过滤；可填 ['SysClient0051', 'SysClient0052', ...]
     max_events_per_window: null  # 每个窗口最大事件数；null 表示不截断（推荐，避免丢攻击尾部）
     max_seq_len: 128             # Step1 输入的最大序列长度（超长会在特征阶段被截断/采样）
     test_path: data/test/AIA-51-75.ecar-last.json   # 测试集原始日志路径（json/jsonl/json.gz 都支持）
     test_prefix: test            # 预处理输出文件前缀（会生成 test_partXXX.pkl）
+    detector_path: data/raw/AIA-51-75.ecar-2019-12-08T04-30-36.852.json   # 第三步打分器专用 benign 数据
+    detector_prefix: detector    # 第三步专用缓存前缀（会生成 detector_partXXX.pkl）
     time_range: null             # 限制时间范围，如 {'start': '2019-09-25T00:00:00', 'end': '2019-09-26T00:00:00'}
-    train_path: data/raw/AIA-51-75.ecar-last.json   # 训练集原始日志路径（可与 test_path 相同，后续按时间切）
+    train_path: data/raw/18-19_AIA-51-75.ecar.json,data/raw/AIA-51-75.ecar-last.json   # 多个原始文件可用逗号分隔
     train_prefix: train          # 预处理输出文件前缀（会生成 train_partXXX.pkl）
-    val_path: data/raw/AIA-51-75.ecar-last.json     # 验证集原始日志路径（可与 train_path 相同）
+    val_path: data/raw/18-19_AIA-51-75.ecar.json,data/raw/AIA-51-75.ecar-last.json     # 与 train_path 相同，后续按时间切分
     val_prefix: val              # 预处理输出文件前缀（会生成 val_partXXX.pkl）
     view_mapping:                # 日志 object_type 到三大视图的映射
       file:                      # 文件视图：包含文件和注册表相关事件
@@ -95,6 +97,7 @@ model:  # 模型结构与训练相关超参数
     temp: 0.1                    # InfoNCE 温度系数
 
   threshold_quantile: 0.99      # 最终异常得分阈值分位数（0.99=Top1% 视为异常）
+  threshold_margin: 1.1      # 增加 10% 的安全余量
   view_sensitivities:            # 各视图的隐私敏感度权重（用于风险感知温度调度）
     file: 1.5                    # 文件视图更敏感（权重大）
     network: 1.0                 # 网络视图默认敏感度
@@ -127,4 +130,4 @@ training:  # 训练流程相关配置
     epochs: 5                    # Teacher 训练轮数（在 main.py 里实际使用）
     lr: 1.0e-05                  # Teacher 训练学习率（在 main.py 里实际使用）
     temp: 0.1                    # InfoNCE 温度系数（在 main.py 里实际使用）
-  detector_epochs: 1000      # Detector 训练轮数（在 main.py 里实际使用）
+  detector_epochs: 50      # Detector 训练轮数（在 main.py 里实际使用）
