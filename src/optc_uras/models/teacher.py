@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -20,22 +19,73 @@ class TeacherModel(nn.Module):
     4. 训练完成后冻结 (Frozen)，作为 Step 2 联邦学生模型的蒸馏指导。
     """
 
-    def __init__(self, behavior_dim: int, num_subspaces: int, subspace_dim: int, hidden_dim: int = 256):
+    def __init__(
+        self,
+        behavior_dim: int,
+        num_subspaces: int,
+        subspace_dim: int,
+        hidden_dim: int = 256,
+        backbone: str = "mlp",
+        num_layers: int = 2,
+        num_heads: int = 4,
+        dropout: float = 0.1,
+    ):
         super().__init__()
         self.behavior_dim = int(behavior_dim)
         self.num_subspaces = int(num_subspaces)
         self.subspace_dim = int(subspace_dim)
-        self.encoder = nn.Sequential(
-            nn.Linear(self.behavior_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
+        self.hidden_dim = int(hidden_dim)
+        self.backbone = str(backbone)
+        if self.backbone == "mlp":
+            self.input_proj = None
+            self.cls_token = None
+            self.pos_emb = None
+            self.encoder = nn.Sequential(
+                nn.Linear(self.behavior_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+            )
+        elif self.backbone == "transformer":
+            self.input_proj = nn.Linear(self.behavior_dim, hidden_dim)
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+            self.pos_emb = nn.Parameter(torch.randn(1, 1025, hidden_dim) * 0.02)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=hidden_dim,
+                nhead=int(num_heads),
+                dim_feedforward=hidden_dim * 4,
+                dropout=float(dropout),
+                batch_first=True,
+                norm_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=int(num_layers))
+        else:
+            raise ValueError(f"Unsupported teacher backbone: {self.backbone}")
         self.heads = nn.ModuleList([nn.Linear(hidden_dim, self.subspace_dim) for _ in range(self.num_subspaces)])
 
-    def forward(self, x: torch.Tensor, normalize: bool = True) -> torch.Tensor:
-        # x: [B, behavior_dim]
-        h = self.encoder(x)  # [B, hidden]
+    def encode(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if self.backbone == "mlp":
+            if x.dim() > 2:
+                x = x.mean(dim=1)
+            return self.encoder(x)
+
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        x = self.input_proj(x)
+        batch_size = x.shape[0]
+        cls = self.cls_token.expand(batch_size, -1, -1)
+        x = torch.cat([cls, x], dim=1)
+        if x.shape[1] > self.pos_emb.shape[1]:
+            raise ValueError(f"Sequence length {x.shape[1]} exceeds teacher max positional length {self.pos_emb.shape[1]}")
+        x = x + self.pos_emb[:, : x.shape[1]]
+        if padding_mask is not None:
+            cls_mask = torch.zeros((padding_mask.shape[0], 1), dtype=padding_mask.dtype, device=padding_mask.device)
+            padding_mask = torch.cat([cls_mask, padding_mask], dim=1).bool()
+        h = self.encoder(x, src_key_padding_mask=padding_mask)
+        return h[:, 0]
+
+    def forward(self, x: torch.Tensor, normalize: bool = True, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        h = self.encode(x, padding_mask=padding_mask)
         outs = []
         for head in self.heads:
             y = head(h)
@@ -62,8 +112,14 @@ class TeacherModel(nn.Module):
         
         return x_aug
 
-    def forward_contrastive(self, x: torch.Tensor, temp: float = 0.1, 
-                            mask_p: float = 0.2, noise_std: float = 0.01) -> torch.Tensor:
+    def forward_contrastive(
+        self,
+        x: torch.Tensor,
+        temp: float = 0.1,
+        mask_p: float = 0.2,
+        noise_std: float = 0.01,
+        padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """A3 InfoNCE Loss Calculation
         
         Formula:
@@ -79,8 +135,8 @@ class TeacherModel(nn.Module):
         # output: [B, M, d_s] -> Flatten to [B, D_out] for global contrast
         # Or contrast per subspace? Usually global contrast for Teacher.
         # Let's flatten all heads to get a single vector per sample.
-        u1 = self.forward(x1, normalize=True).reshape(x.size(0), -1)
-        u2 = self.forward(x2, normalize=True).reshape(x.size(0), -1)
+        u1 = self.forward(x1, normalize=True, padding_mask=padding_mask).reshape(x.size(0), -1)
+        u2 = self.forward(x2, normalize=True, padding_mask=padding_mask).reshape(x.size(0), -1)
         
         # Re-normalize after flattening
         u1 = F.normalize(u1, dim=-1)

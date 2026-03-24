@@ -70,7 +70,7 @@ class OpTCEcarDataset(Dataset):
         for fpath in tqdm(unique_files, desc=f"Preloading {self.split}"):
             try:
                 if fpath.endswith(".pt"):
-                    chunk = torch.load(fpath, map_location="cpu")
+                    chunk = torch.load(fpath, map_location="cpu", weights_only=False)
                 else:
                     with open(fpath, "rb") as f:
                         chunk = pickle.load(f)
@@ -114,7 +114,7 @@ class OpTCEcarDataset(Dataset):
             try:
                 # Support both .pt and .pkl
                 if f.endswith(".pt"):
-                    chunk = torch.load(path, map_location="cpu")
+                    chunk = torch.load(path, map_location="cpu", weights_only=False)
                 else:
                     with open(path, "rb") as fp:
                         chunk = pickle.load(fp)
@@ -184,7 +184,7 @@ class OpTCEcarDataset(Dataset):
             gc.collect()
 
         if fpath.endswith(".pt"):
-            chunk = torch.load(fpath, map_location="cpu")
+            chunk = torch.load(fpath, map_location="cpu", weights_only=False)
         else:
             with open(fpath, "rb") as f:
                 chunk = pickle.load(f)
