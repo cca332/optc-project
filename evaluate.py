@@ -89,6 +89,12 @@ def load_ground_truth(path: Optional[str]) -> Set[AttackKey]:
     return out
 
 
+def describe_ground_truth_source(path: Optional[str]) -> str:
+    if path:
+        return f"custom ground truth: {path}"
+    return "built-in full-chain ground truth"
+
+
 def make_attack_folds(keys: Iterable[AttackKey], n_folds: int = 3) -> List[List[AttackKey]]:
     keys_sorted = sorted(set(keys))
     if n_folds <= 0:
